@@ -1,0 +1,169 @@
+# ==================== PYTHON ====================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.python-version
+
+# ==================== ENVIRONMENT VARIABLES ====================
+# Environment files - YAHAN SABSE IMPORTANT!
+.env
+.env.local
+.env.production
+.env.development
+.env.staging
+.env.example  # Keep this one, it's just an example
+
+# ==================== VIRTUAL ENVIRONMENT ====================
+# Virtual environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+pythonenv*
+
+# ==================== PACKAGE FILES ====================
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ==================== DATABASE ====================
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ==================== IDE FILES ====================
+# IDE - VSCode
+.vscode/
+*.code-workspace
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+# IDE - PyCharm
+.idea/
+*.iml
+*.iws
+.idea_modules/
+
+# IDE - Sublime
+*.sublime-workspace
+*.sublime-project
+
+# ==================== OS FILES ====================
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# ==================== LOGS ====================
+# Logs
+logs/
+*.log
+log.txt
+*.log.*
+
+# ==================== SECURITY ====================
+# Security keys
+*.pem
+*.key
+*.crt
+*.cert
+
+# ==================== TESTING ====================
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.coverage.*
+*.cover
+*.py,cover
+.hypothesis/
+.nerdly/
+
+# ==================== BUILD/DIST ====================
+# Build
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+pip-wheel-metadata/
+share/python-wheels/
+
+# ==================== JUPYTER ====================
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# ==================== CELERY ====================
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# ==================== SAGE MATH ====================
+# SageMath parsed files
+*.sage.py
+
+# ==================== ENVIRONMENT ====================
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ==================== SPYDER ====================
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# ==================== ROPE ====================
+# Rope project settings
+.ropeproject
+
+# ==================== MYPY ====================
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ==================== PYRE ====================
+# Pyre type checker
+.pyre/
+
+# ==================== BACKUP FILES ====================
+# Backup files
+*.bak
+*.backup
+
+# ==================== DOCKER ====================
+# Docker
+docker-compose.override.yml
+.docker/
+
+# ==================== VERCEL / RENDER ====================
+# Deployment specific
+.vercel
+.render

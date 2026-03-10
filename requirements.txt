@@ -1,0 +1,45 @@
+# ================= CORE =================
+fastapi==0.110.0
+uvicorn[standard]==0.27.1
+python-dotenv==1.0.1
+pydantic==2.11.9
+python-multipart==0.0.9
+
+# ================= NETWORK =================
+httpx[http2]==0.28.1
+httpcore==1.0.9
+aiohttp==3.9.5
+requests==2.31.0
+
+# ================= DATABASE =================
+asyncpg==0.29.0
+aiosqlite==0.20.0
+redis==5.0.1
+supabase==2.18.1
+
+# ================= LLMs =================
+openai==1.3.0
+groq==0.4.2
+anthropic==0.18.1
+google-generativeai==0.4.1
+huggingface-hub==0.21.4
+replicate==0.25.1
+openrouter==0.6.0
+tavily-python==0.3.3
+
+# ================= SCRAPING / NEWS =================
+beautifulsoup4==4.12.3
+trafilatura==1.6.3
+lxml==5.2.2
+htmldate==1.9.1
+
+# ================= FILES =================
+pandas==2.2.1
+pillow==10.2.0
+PyPDF2==3.0.1
+python-docx==1.1.0
+openpyxl==3.1.2
+
+# ================= VOICE =================
+assemblyai==0.21.0
+elevenlabs==0.2.27

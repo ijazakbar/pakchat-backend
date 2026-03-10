@@ -34,7 +34,7 @@ lxml==5.2.2
 htmldate==1.9.1
 
 # ================= FILES =================
-pandas==2.2.1
+pandas==2.1.4              # ⬅️ YAHAN CHANGE KIYA
 pillow==10.2.0
 PyPDF2==3.0.1
 python-docx==1.1.0

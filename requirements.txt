@@ -45,3 +45,5 @@ openpyxl==3.1.2
 # ================= VOICE =================
 assemblyai==0.21.0
 elevenlabs==0.2.27
+
+aiofiles==23.2.1

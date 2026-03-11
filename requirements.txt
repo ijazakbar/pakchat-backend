@@ -49,3 +49,7 @@ elevenlabs==0.2.27
 aiofiles==23.2.1
 # ================= FAL.AI =================   <-- YEH SECTION ADD KARO
 fal-client==0.5.1
+# Security
+slowapi>=0.1.8
+python-multipart>=0.0.6
+email-validator>=2.0.0

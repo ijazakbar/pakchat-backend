@@ -1182,7 +1182,50 @@ async def llm_chat(request: LLMChatRequest, current_user: dict = Depends(get_opt
             }],
             "provider": "error"
         }
-
+# ==================== OPENAI-COMPATIBLE ENDPOINT FOR NEXTCHAT ====================
+@app.post("/v1/chat/completions")
+async def openai_compatible_chat(request: dict):
+    """OpenAI-compatible endpoint for NextChat frontend"""
+    try:
+        # Extract request data
+        messages = request.get("messages", [])
+        model = request.get("model", "gpt-3.5-turbo")
+        stream = request.get("stream", False)
+        temperature = request.get("temperature", 0.7)
+        max_tokens = request.get("max_tokens")
+        
+        logger.info(f"📨 OpenAI-compatible request: model={model}, stream={stream}")
+        
+        if not llm_service:
+            raise HTTPException(status_code=503, detail="LLM service not available")
+        
+        # Call your LLM service
+        result = await llm_service.chat_completion(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        
+        # Return in OpenAI format
+        return {
+            "id": f"chatcmpl-{uuid.uuid4()}",
+            "object": "chat.completion",
+            "created": int(datetime.now().timestamp()),
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": result['choices'][0]['message'],
+                "finish_reason": "stop"
+            }],
+            "usage": result.get('usage', {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0
+            })
+        }
+    except Exception as e:
+        logger.error(f"OpenAI compatible error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 # ==================== STREAMING LLM CHAT ====================
 @app.post("/api/chat/llm/stream")
 async def llm_chat_stream(request: LLMChatRequest, current_user: dict = Depends(get_optional_user)):

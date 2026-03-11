@@ -1,18 +1,16 @@
 """
-PAKCHAT ENTERPRISE SECURITY MIDDLEWARE
+PAKCHAT ENTERPRISE SECURITY MIDDLEWARE - FIXED VERSION
 Ultimate protection for production deployment
 """
 
 import logging
 import time
 import re
-import hashlib
 import ipaddress
 from typing import Dict, List, Set, Tuple
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from fastapi import FastAPI, Request
-from fastapi.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -30,9 +28,9 @@ class SecurityConfig:
     
     # IP Blacklist/Whitelist
     IP_BLACKLIST_ENABLED = True
-    IP_WHITELIST_ENABLED = False  # Set to True to only allow specific IPs
-    IP_WHITELIST: Set[str] = set()  # Add IPs here
-    IP_BLACKLIST: Set[str] = set()  # Auto-populated
+    IP_WHITELIST_ENABLED = False
+    IP_WHITELIST: Set[str] = set()
+    IP_BLACKLIST: Set[str] = set()
     
     # SQL Injection Patterns
     SQL_INJECTION_PATTERNS = [
@@ -76,8 +74,6 @@ class SecurityConfig:
         r"\.\.%5c",
         r"%2e%2e%2f",
         r"%2e%2e%5c",
-        r"\.\./\.\./",
-        r"\.\.\\\.\.\\",
     ]
     
     # Command Injection Patterns
@@ -98,8 +94,7 @@ class SecurityConfig:
         "gobuster", "dirbuster", "wfuzz", "hydra", "medusa",
         "ncrack", "zmap", "masscan", "python-requests",
         "go-http-client", "scrapy", "curl", "wget",
-        "zgrab", "jorgee", "masscan", "zmap", "nmap",
-        "python-urllib", "perl", "ruby", "php",
+        "zgrab", "jorgee", "python-urllib", "perl", "ruby",
     }
     
     # Security Headers
@@ -157,7 +152,7 @@ class AdvancedRateLimiter:
         
         if request_count >= SecurityConfig.RATE_LIMIT_REQUESTS:
             retry_after = int(SecurityConfig.RATE_LIMIT_WINDOW - (current_time - self.requests[ip][0]))
-            return False, f"Rate limit exceeded", retry_after
+            return False, "Rate limit exceeded", max(retry_after, 1)
         
         # Add request
         self.requests[ip].append(current_time)
@@ -168,21 +163,6 @@ class AdvancedRateLimiter:
 
 class IPValidator:
     """Advanced IP validation with whitelist/blacklist support"""
-    
-    def __init__(self):
-        self.load_blacklist()
-    
-    def load_blacklist(self):
-        """Load IP blacklist from file"""
-        try:
-            with open("ip_blacklist.txt", "r") as f:
-                for line in f:
-                    ip = line.strip()
-                    if ip and not ip.startswith("#"):
-                        SecurityConfig.IP_BLACKLIST.add(ip)
-            logger.info(f"✅ Loaded {len(SecurityConfig.IP_BLACKLIST)} IPs to blacklist")
-        except FileNotFoundError:
-            logger.info("ℹ️ No IP blacklist file found, starting fresh")
     
     def is_ip_allowed(self, ip: str) -> Tuple[bool, str]:
         """Check if IP is allowed based on whitelist/blacklist"""
@@ -204,7 +184,7 @@ class IPValidator:
         if (ip_obj.is_private or ip_obj.is_loopback or 
             ip_obj.is_link_local or ip_obj.is_multicast):
             # Allow localhost for development
-            if ip not in ["127.0.0.1", "::1", "localhost"]:
+            if ip not in ["127.0.0.1", "::1"]:
                 return False, "Internal IP not allowed"
         
         return True, "IP allowed"
@@ -222,10 +202,6 @@ class IPValidator:
             if suspicious in ua_lower:
                 return True, f"Suspicious user agent: {suspicious}"
         
-        # Check for browser-like user agents
-        if not any(browser in ua_lower for browser in ["mozilla", "chrome", "safari", "firefox", "edge"]):
-            return True, "Non-browser user agent"
-        
         return False, "OK"
 
 
@@ -240,10 +216,9 @@ class InjectionDetector:
         if not text or not isinstance(text, str):
             return False, ""
         
-        text_lower = text.lower()
         for pattern in SecurityConfig.SQL_INJECTION_PATTERNS:
-            if re.search(pattern, text_lower, re.IGNORECASE):
-                return True, f"SQL injection pattern: {pattern}"
+            if re.search(pattern, text, re.IGNORECASE):
+                return True, f"SQL injection pattern detected"
         return False, ""
     
     @staticmethod
@@ -254,7 +229,7 @@ class InjectionDetector:
         
         for pattern in SecurityConfig.XSS_PATTERNS:
             if re.search(pattern, text, re.IGNORECASE):
-                return True, f"XSS pattern: {pattern}"
+                return True, f"XSS pattern detected"
         return False, ""
     
     @staticmethod
@@ -265,7 +240,7 @@ class InjectionDetector:
         
         for pattern in SecurityConfig.PATH_TRAVERSAL_PATTERNS:
             if pattern in path.lower():
-                return True, f"Path traversal: {pattern}"
+                return True, f"Path traversal detected"
         return False, ""
     
     @staticmethod
@@ -276,17 +251,19 @@ class InjectionDetector:
         
         for pattern in SecurityConfig.COMMAND_INJECTION_PATTERNS:
             if re.search(pattern, text):
-                return True, f"Command injection: {pattern}"
+                return True, f"Command injection detected"
         return False, ""
     
     @staticmethod
     def check_all(text: str) -> Tuple[bool, str]:
         """Check all injection types"""
-        for check in [
+        checks = [
             InjectionDetector.check_sql_injection,
             InjectionDetector.check_xss,
             InjectionDetector.check_command_injection,
-        ]:
+        ]
+        
+        for check in checks:
             detected, reason = check(text)
             if detected:
                 return True, reason
@@ -298,9 +275,8 @@ class InjectionDetector:
 class RequestLogger:
     """Log suspicious requests for monitoring"""
     
-    def __init__(self, max_logs: int = 1000):
+    def __init__(self):
         self.suspicious_logs = []
-        self.max_logs = max_logs
         self.stats = defaultdict(int)
     
     def log_suspicious(self, ip: str, reason: str, path: str, method: str):
@@ -318,34 +294,31 @@ class RequestLogger:
         self.stats[ip] += 1
         self.stats[f"reason:{reason}"] += 1
         
-        # Trim logs if needed
-        if len(self.suspicious_logs) > self.max_logs:
-            self.suspicious_logs = self.suspicious_logs[-self.max_logs:]
-        
         logger.warning(f"🚨 Suspicious request from {ip}: {reason}")
-    
-    def get_stats(self) -> Dict:
-        """Get security statistics"""
-        return {
-            "total_suspicious": len(self.suspicious_logs),
-            "stats": dict(self.stats),
-            "recent": self.suspicious_logs[-10:]  # Last 10 suspicious requests
-        }
 
 
-# ==================== MAIN SECURITY MIDDLEWARE ====================
+# ==================== GLOBAL INSTANCES ====================
+# Ek baar initialize karo, baar baar nahi
 
-class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
-    """Ultimate security middleware with all protections"""
+_rate_limiter = AdvancedRateLimiter()
+_ip_validator = IPValidator()
+_detector = InjectionDetector()
+_req_logger = RequestLogger()
+
+
+# ==================== MAIN SECURITY MIDDLEWARE FUNCTION ====================
+
+def add_security_middleware(app: FastAPI) -> FastAPI:
+    """
+    Add ultimate security middleware to FastAPI app
+    This is the main function called from main.py
+    """
+    logger.info("=" * 60)
+    logger.info("🔒 ADDING ENTERPRISE SECURITY MIDDLEWARE")
+    logger.info("=" * 60)
     
-    def __init__(self, app: FastAPI):
-        super().__init__(app)
-        self.rate_limiter = AdvancedRateLimiter()
-        self.ip_validator = IPValidator()
-        self.detector = InjectionDetector()
-        self.logger = RequestLogger()
-    
-    async def dispatch(self, request: Request, call_next):
+    @app.middleware("http")
+    async def security_middleware(request: Request, call_next):
         """Main security dispatch function"""
         
         # Extract client information
@@ -354,10 +327,14 @@ class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         method = request.method
         
+        # Skip security for health checks and docs (optional)
+        if path in ["/health", "/docs", "/redoc", "/openapi.json"]:
+            return await call_next(request)
+        
         # === 1. IP Validation ===
-        allowed, reason = self.ip_validator.is_ip_allowed(client_ip)
+        allowed, reason = _ip_validator.is_ip_allowed(client_ip)
         if not allowed:
-            self.logger.log_suspicious(client_ip, reason, path, method)
+            _req_logger.log_suspicious(client_ip, reason, path, method)
             return JSONResponse(
                 status_code=403,
                 content={
@@ -368,9 +345,9 @@ class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
             )
         
         # === 2. Rate Limiting ===
-        allowed, reason, retry_after = self.rate_limiter.check(client_ip)
+        allowed, reason, retry_after = _rate_limiter.check(client_ip)
         if not allowed:
-            self.logger.log_suspicious(client_ip, reason, path, method)
+            _req_logger.log_suspicious(client_ip, reason, path, method)
             response = JSONResponse(
                 status_code=429,
                 content={
@@ -383,9 +360,9 @@ class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
             return response
         
         # === 3. User Agent Validation ===
-        suspicious, reason = self.ip_validator.is_suspicious_user_agent(user_agent)
+        suspicious, reason = _ip_validator.is_suspicious_user_agent(user_agent)
         if suspicious:
-            self.logger.log_suspicious(client_ip, reason, path, method)
+            _req_logger.log_suspicious(client_ip, reason, path, method)
             return JSONResponse(
                 status_code=403,
                 content={
@@ -396,9 +373,9 @@ class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
             )
         
         # === 4. Path Traversal Check ===
-        detected, reason = self.detector.check_path_traversal(path)
+        detected, reason = _detector.check_path_traversal(path)
         if detected:
-            self.logger.log_suspicious(client_ip, reason, path, method)
+            _req_logger.log_suspicious(client_ip, reason, path, method)
             return JSONResponse(
                 status_code=400,
                 content={
@@ -408,45 +385,48 @@ class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
                 }
             )
         
-        # === 5. Request Body Inspection (for state-changing methods) ===
-        if method in ["POST", "PUT", "PATCH", "DELETE"]:
+        # === 5. Request Body Inspection (for POST/PUT requests) ===
+        if method in ["POST", "PUT", "PATCH"]:
             try:
-                # Try to get body as text
+                # Try to get body
                 body_bytes = await request.body()
                 if body_bytes:
-                    # Reset body for later consumption
+                    # Restore body for later use
                     request._body = body_bytes
                     
                     # Decode body
                     body_str = body_bytes.decode('utf-8', errors='ignore')
                     
-                    # Check for injections
-                    detected, reason = self.detector.check_all(body_str)
-                    if detected:
-                        self.logger.log_suspicious(client_ip, reason, path, method)
-                        return JSONResponse(
-                            status_code=400,
-                            content={
-                                "detail": "Invalid request content",
-                                "reason": reason,
-                                "code": "INJECTION_DETECTED"
-                            }
-                        )
+                    # Check for injections (only if body is text-like)
+                    if len(body_str) > 0 and not all(ord(c) < 128 for c in body_str if ord(c) > 127):
+                        detected, reason = _detector.check_all(body_str)
+                        if detected:
+                            _req_logger.log_suspicious(client_ip, reason, path, method)
+                            return JSONResponse(
+                                status_code=400,
+                                content={
+                                    "detail": "Invalid request content",
+                                    "reason": reason,
+                                    "code": "INJECTION_DETECTED"
+                                }
+                            )
             except Exception as e:
                 logger.error(f"Error inspecting request body: {e}")
         
         # === 6. Check headers for suspicious content ===
         for header_name, header_value in request.headers.items():
+            # Skip sensitive headers
             if header_name.lower() in ["authorization", "cookie", "x-api-key"]:
-                continue  # Skip sensitive headers
-            detected, reason = self.detector.check_all(header_value)
+                continue
+            
+            detected, reason = _detector.check_all(header_value)
             if detected:
-                self.logger.log_suspicious(client_ip, f"Header {header_name}: {reason}", path, method)
+                _req_logger.log_suspicious(client_ip, f"Header {header_name}: {reason}", path, method)
                 return JSONResponse(
                     status_code=400,
                     content={
                         "detail": "Invalid request headers",
-                        "reason": f"Suspicious content in {header_name}",
+                        "reason": f"Suspicious content in header",
                         "code": "INVALID_HEADER"
                     }
                 )
@@ -469,48 +449,17 @@ class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
             response.headers[header] = value
         
         return response
-
-
-# ==================== SECURITY STATS ENDPOINT ====================
-
-def add_security_stats_endpoint(app: FastAPI, middleware: EnterpriseSecurityMiddleware):
-    """Add endpoint to view security statistics"""
-    
-    @app.get("/admin/security/stats")
-    async def get_security_stats():
-        """Get security statistics (admin only - add auth later)"""
-        return middleware.logger.get_stats()
-
-
-# ==================== EXPORT FUNCTION ====================
-
-def add_security_middleware(app: FastAPI) -> FastAPI:
-    """
-    Add ultimate security middleware to FastAPI app
-    This is the main function called from main.py
-    """
-    logger.info("=" * 60)
-    logger.info("🔒 ADDING ENTERPRISE SECURITY MIDDLEWARE")
-    logger.info("=" * 60)
-    
-    # Create and add middleware
-    security_middleware = EnterpriseSecurityMiddleware(app)
-    app.add_middleware(EnterpriseSecurityMiddleware)
-    
-    # Add security stats endpoint (optional - remove in production if not needed)
-    # add_security_stats_endpoint(app, security_middleware)
     
     # Log security features
     logger.info("✅ ENTERPRISE SECURITY MIDDLEWARE: ACTIVE")
-    logger.info("├─ Rate Limiting: 100 requests/minute + burst")
-    logger.info("├─ IP Blacklisting: Active")
+    logger.info(f"├─ Rate Limiting: {SecurityConfig.RATE_LIMIT_REQUESTS} requests/{SecurityConfig.RATE_LIMIT_WINDOW}s + burst")
+    logger.info("├─ IP Validation: Active")
     logger.info("├─ SQL Injection Protection: Active")
     logger.info("├─ XSS Protection: Active")
     logger.info("├─ Path Traversal Protection: Active")
     logger.info("├─ Command Injection Protection: Active")
     logger.info("├─ Suspicious User Agent Detection: Active")
-    logger.info("├─ Request Body Inspection: Active")
-    logger.info("└─ Security Headers: Added (11 headers)")
+    logger.info("└─ Security Headers: Added")
     logger.info("=" * 60)
     
     return app

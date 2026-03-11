@@ -524,23 +524,24 @@ async def startup_event():
         import traceback
         logger.error(traceback.format_exc())
 
-# ==================== CORS ====================
+# ==================== CORS (UPDATED) ====================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3000", 
         "http://localhost:8000",
         "http://127.0.0.1:8000",
-        "https://pakchatai.vercel.app",  # ✅ Tumhara Vercel URL
-        "https://pakchat.vercel.app",    # ✅ Agar ye bhi ho to
-        "https://pakchat.netlify.app",    # ✅ Agar Netlify par bhi ho
-        "https://pak-chat-ai.vercel.app", # ✅ Jo abhi live hai
+        "https://pakchatai.vercel.app",
+        "https://pakchat-frontend.vercel.app",
+        "https://pakchatai-git-main-ijazakbars-projects.vercel.app",
+        "https://pakchat-backend.onrender.com",  # Backend khud bhi allow karo
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allow_methods=["*"],  # Sab methods allow karo (GET, POST, PUT, DELETE, OPTIONS)
+    allow_headers=["*"],  # Sab headers allow karo
+    expose_headers=["*"],
+    max_age=86400,  # Preflight result cache 24 hours
 )
 
 # ========== 🔐 ADD SECURITY MIDDLEWARE ==========

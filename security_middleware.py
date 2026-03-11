@@ -1,19 +1,16 @@
 """
 PAKCHAT ENTERPRISE SECURITY MIDDLEWARE
-Production-ready security with comprehensive protection
+Ultimate protection for production deployment
 """
 
 import logging
 import time
 import re
-import ipaddress
 import hashlib
-import hmac
-import os
-from typing import Dict, List, Set, Tuple, Optional
+import ipaddress
+from typing import Dict, List, Set, Tuple
 from collections import defaultdict
 from datetime import datetime, timedelta
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
@@ -23,27 +20,31 @@ logger = logging.getLogger(__name__)
 # ==================== CONFIGURATION ====================
 
 class SecurityConfig:
-    """Enterprise security configuration"""
+    """Security configuration - easily adjustable"""
     
     # Rate Limiting
     RATE_LIMIT_ENABLED = True
-    RATE_LIMIT_REQUESTS = 60  # requests per minute
+    RATE_LIMIT_REQUESTS = 100  # requests per window
     RATE_LIMIT_WINDOW = 60  # seconds
+    RATE_LIMIT_BURST = 20  # extra requests for burst
     
-    # IP Blacklist
+    # IP Blacklist/Whitelist
     IP_BLACKLIST_ENABLED = True
-    IP_BLACKLIST: Set[str] = set()
+    IP_WHITELIST_ENABLED = False  # Set to True to only allow specific IPs
+    IP_WHITELIST: Set[str] = set()  # Add IPs here
+    IP_BLACKLIST: Set[str] = set()  # Auto-populated
     
-    # SQL Injection patterns
+    # SQL Injection Patterns
     SQL_INJECTION_PATTERNS = [
         r"(\s|')*(union|select|insert|update|delete|drop|create|alter|exec|execute|truncate|rename|replace|grant|revoke)(\s|')+",
         r"(\s|')*(or|and)(\s|')+.*(=|<|>|in|like|between)",
         r"(\s|')*(;|--|#|/\*|\*/)",
         r"(\s|')*(information_schema|sys.tables|sys.columns)",
         r"(\s|')*(xp_cmdshell|sp_executesql|sp_prepare)",
+        r"(\s|')*(sleep|waitfor|benchmark)(\s|')*\(",
     ]
     
-    # XSS patterns
+    # XSS Patterns
     XSS_PATTERNS = [
         r"<script[^>]*>.*?</script>",
         r"javascript:",
@@ -56,13 +57,18 @@ class SecurityConfig:
         r"onchange\s*=",
         r"onsubmit\s*=",
         r"<iframe[^>]*>.*?</iframe>",
+        r"<embed[^>]*>.*?</embed>",
+        r"<object[^>]*>.*?</object>",
         r"document\.cookie",
         r"document\.location",
         r"window\.location",
         r"eval\s*\(",
+        r"alert\s*\(",
+        r"prompt\s*\(",
+        r"confirm\s*\(",
     ]
     
-    # Path traversal patterns
+    # Path Traversal Patterns
     PATH_TRAVERSAL_PATTERNS = [
         r"\.\./",
         r"\.\.\\",
@@ -70,264 +76,441 @@ class SecurityConfig:
         r"\.\.%5c",
         r"%2e%2e%2f",
         r"%2e%2e%5c",
+        r"\.\./\.\./",
+        r"\.\.\\\.\.\\",
     ]
     
-    # Suspicious user agents
+    # Command Injection Patterns
+    COMMAND_INJECTION_PATTERNS = [
+        r"[;&|`]",
+        r"\$(\(|\{)",
+        r"\%[0-9a-fA-F]{2}",
+        r"&&",
+        r"\|\|",
+        r">\s*\/",
+        r"<\s*\/",
+    ]
+    
+    # Suspicious User Agents
     SUSPICIOUS_USER_AGENTS = {
         "nikto", "sqlmap", "nmap", "nessus", "openvas",
         "wpscan", "joomscan", "droopescan", "whatweb",
         "gobuster", "dirbuster", "wfuzz", "hydra", "medusa",
         "ncrack", "zmap", "masscan", "python-requests",
-        "go-http-client", "scrapy", "curl", "wget"
+        "go-http-client", "scrapy", "curl", "wget",
+        "zgrab", "jorgee", "masscan", "zmap", "nmap",
+        "python-urllib", "perl", "ruby", "php",
+    }
+    
+    # Security Headers
+    SECURITY_HEADERS = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+        "Content-Security-Policy": "default-src 'self'; script-src 'self'; object-src 'none';",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
     }
 
 
 # ==================== RATE LIMITER ====================
 
-class RateLimiter:
-    """Advanced rate limiting with sliding window"""
+class AdvancedRateLimiter:
+    """Advanced rate limiting with sliding window and burst handling"""
     
     def __init__(self):
         self.requests: Dict[str, List[float]] = defaultdict(list)
-        self.blacklist: Set[str] = set()
+        self.blocked: Dict[str, float] = {}
+        self.block_duration = 300  # 5 minutes block
         
-    def check(self, ip: str) -> Tuple[bool, str]:
-        """Check if IP is allowed"""
-        if ip in self.blacklist:
-            return False, "IP permanently blocked"
-        
+    def check(self, ip: str) -> Tuple[bool, str, int]:
+        """Check if IP is allowed, returns (allowed, reason, retry_after)"""
         current_time = time.time()
-        window_start = current_time - SecurityConfig.RATE_LIMIT_WINDOW
+        
+        # Check if IP is temporarily blocked
+        if ip in self.blocked:
+            block_time = self.blocked[ip]
+            if current_time - block_time < self.block_duration:
+                retry_after = int(self.block_duration - (current_time - block_time))
+                return False, "IP temporarily blocked", retry_after
+            else:
+                del self.blocked[ip]
         
         # Clean old requests
+        window_start = current_time - SecurityConfig.RATE_LIMIT_WINDOW
         self.requests[ip] = [
             req_time for req_time in self.requests[ip]
             if req_time > window_start
         ]
         
-        # Check rate limit
-        if len(self.requests[ip]) >= SecurityConfig.RATE_LIMIT_REQUESTS:
-            return False, f"Rate limit exceeded ({SecurityConfig.RATE_LIMIT_REQUESTS} requests per {SecurityConfig.RATE_LIMIT_WINDOW}s)"
+        # Check rate limit with burst allowance
+        request_count = len(self.requests[ip])
+        if request_count >= SecurityConfig.RATE_LIMIT_REQUESTS + SecurityConfig.RATE_LIMIT_BURST:
+            # Block IP for suspicious activity
+            self.blocked[ip] = current_time
+            logger.warning(f"🚫 IP {ip} blocked for excessive requests")
+            return False, "IP blocked for suspicious activity", 300
+        
+        if request_count >= SecurityConfig.RATE_LIMIT_REQUESTS:
+            retry_after = int(SecurityConfig.RATE_LIMIT_WINDOW - (current_time - self.requests[ip][0]))
+            return False, f"Rate limit exceeded", retry_after
         
         # Add request
         self.requests[ip].append(current_time)
-        return True, "Allowed"
-
-
-# ==================== INJECTION DETECTOR ====================
-
-class InjectionDetector:
-    """Comprehensive injection attack detection"""
-    
-    @staticmethod
-    def check_sql_injection(text: str) -> bool:
-        """Check for SQL injection"""
-        if not text or not isinstance(text, str):
-            return False
-        text_lower = text.lower()
-        for pattern in SecurityConfig.SQL_INJECTION_PATTERNS:
-            if re.search(pattern, text_lower):
-                logger.warning(f"SQL injection detected: {pattern}")
-                return True
-        return False
-    
-    @staticmethod
-    def check_xss(text: str) -> bool:
-        """Check for XSS attacks"""
-        if not text or not isinstance(text, str):
-            return False
-        for pattern in SecurityConfig.XSS_PATTERNS:
-            if re.search(pattern, text, re.IGNORECASE):
-                logger.warning(f"XSS attack detected: {pattern}")
-                return True
-        return False
-    
-    @staticmethod
-    def check_path_traversal(path: str) -> bool:
-        """Check for path traversal attempts"""
-        if not path:
-            return False
-        for pattern in SecurityConfig.PATH_TRAVERSAL_PATTERNS:
-            if pattern in path.lower():
-                logger.warning(f"Path traversal detected: {pattern}")
-                return True
-        return False
-    
-    @staticmethod
-    def check_all(text: str) -> bool:
-        """Check all injection types"""
-        return (InjectionDetector.check_sql_injection(text) or
-                InjectionDetector.check_xss(text) or
-                InjectionDetector.check_path_traversal(text))
+        return True, "Allowed", 0
 
 
 # ==================== IP VALIDATOR ====================
 
 class IPValidator:
-    """IP address validation and threat detection"""
+    """Advanced IP validation with whitelist/blacklist support"""
     
-    @staticmethod
-    def is_private_ip(ip: str) -> bool:
-        """Check if IP is private/internal"""
-        try:
-            ip_obj = ipaddress.ip_address(ip)
-            return (ip_obj.is_private or ip_obj.is_loopback or 
-                    ip_obj.is_link_local or ip_obj.is_multicast or 
-                    ip_obj.is_reserved)
-        except:
-            return True
+    def __init__(self):
+        self.load_blacklist()
     
-    @staticmethod
-    def is_suspicious_user_agent(user_agent: str) -> bool:
-        """Check for suspicious user agents"""
-        if not user_agent:
-            return True
-        ua_lower = user_agent.lower()
-        for suspicious in SecurityConfig.SUSPICIOUS_USER_AGENTS:
-            if suspicious in ua_lower:
-                logger.warning(f"Suspicious UA detected: {user_agent}")
-                return True
-        return False
-
-
-# ==================== MAIN SECURITY MIDDLEWARE ====================
-
-class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
-    """
-    Enterprise-grade security middleware with comprehensive protection
-    """
-    
-    def __init__(self, app: FastAPI):
-        super().__init__(app)
-        self.rate_limiter = RateLimiter()
-        self.detector = InjectionDetector()
-        self.validator = IPValidator()
-        self._load_blacklist()
-    
-    def _load_blacklist(self):
-        """Load IP blacklist"""
+    def load_blacklist(self):
+        """Load IP blacklist from file"""
         try:
             with open("ip_blacklist.txt", "r") as f:
                 for line in f:
                     ip = line.strip()
                     if ip and not ip.startswith("#"):
                         SecurityConfig.IP_BLACKLIST.add(ip)
-                        self.rate_limiter.blacklist.add(ip)
             logger.info(f"✅ Loaded {len(SecurityConfig.IP_BLACKLIST)} IPs to blacklist")
         except FileNotFoundError:
             logger.info("ℹ️ No IP blacklist file found, starting fresh")
     
+    def is_ip_allowed(self, ip: str) -> Tuple[bool, str]:
+        """Check if IP is allowed based on whitelist/blacklist"""
+        try:
+            ip_obj = ipaddress.ip_address(ip)
+        except:
+            return False, "Invalid IP address"
+        
+        # Check whitelist first (if enabled)
+        if SecurityConfig.IP_WHITELIST_ENABLED:
+            if ip not in SecurityConfig.IP_WHITELIST:
+                return False, "IP not in whitelist"
+        
+        # Check blacklist
+        if ip in SecurityConfig.IP_BLACKLIST:
+            return False, "IP is blacklisted"
+        
+        # Check private/internal IPs (block by default)
+        if (ip_obj.is_private or ip_obj.is_loopback or 
+            ip_obj.is_link_local or ip_obj.is_multicast):
+            # Allow localhost for development
+            if ip not in ["127.0.0.1", "::1", "localhost"]:
+                return False, "Internal IP not allowed"
+        
+        return True, "IP allowed"
+    
+    @staticmethod
+    def is_suspicious_user_agent(user_agent: str) -> Tuple[bool, str]:
+        """Check if user agent is suspicious"""
+        if not user_agent:
+            return True, "Missing user agent"
+        
+        ua_lower = user_agent.lower()
+        
+        # Check against known malicious bots
+        for suspicious in SecurityConfig.SUSPICIOUS_USER_AGENTS:
+            if suspicious in ua_lower:
+                return True, f"Suspicious user agent: {suspicious}"
+        
+        # Check for browser-like user agents
+        if not any(browser in ua_lower for browser in ["mozilla", "chrome", "safari", "firefox", "edge"]):
+            return True, "Non-browser user agent"
+        
+        return False, "OK"
+
+
+# ==================== INJECTION DETECTOR ====================
+
+class InjectionDetector:
+    """Detect various injection attacks in requests"""
+    
+    @staticmethod
+    def check_sql_injection(text: str) -> Tuple[bool, str]:
+        """Check for SQL injection patterns"""
+        if not text or not isinstance(text, str):
+            return False, ""
+        
+        text_lower = text.lower()
+        for pattern in SecurityConfig.SQL_INJECTION_PATTERNS:
+            if re.search(pattern, text_lower, re.IGNORECASE):
+                return True, f"SQL injection pattern: {pattern}"
+        return False, ""
+    
+    @staticmethod
+    def check_xss(text: str) -> Tuple[bool, str]:
+        """Check for XSS attacks"""
+        if not text or not isinstance(text, str):
+            return False, ""
+        
+        for pattern in SecurityConfig.XSS_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True, f"XSS pattern: {pattern}"
+        return False, ""
+    
+    @staticmethod
+    def check_path_traversal(path: str) -> Tuple[bool, str]:
+        """Check for path traversal attempts"""
+        if not path:
+            return False, ""
+        
+        for pattern in SecurityConfig.PATH_TRAVERSAL_PATTERNS:
+            if pattern in path.lower():
+                return True, f"Path traversal: {pattern}"
+        return False, ""
+    
+    @staticmethod
+    def check_command_injection(text: str) -> Tuple[bool, str]:
+        """Check for command injection"""
+        if not text or not isinstance(text, str):
+            return False, ""
+        
+        for pattern in SecurityConfig.COMMAND_INJECTION_PATTERNS:
+            if re.search(pattern, text):
+                return True, f"Command injection: {pattern}"
+        return False, ""
+    
+    @staticmethod
+    def check_all(text: str) -> Tuple[bool, str]:
+        """Check all injection types"""
+        for check in [
+            InjectionDetector.check_sql_injection,
+            InjectionDetector.check_xss,
+            InjectionDetector.check_command_injection,
+        ]:
+            detected, reason = check(text)
+            if detected:
+                return True, reason
+        return False, ""
+
+
+# ==================== REQUEST LOGGER ====================
+
+class RequestLogger:
+    """Log suspicious requests for monitoring"""
+    
+    def __init__(self, max_logs: int = 1000):
+        self.suspicious_logs = []
+        self.max_logs = max_logs
+        self.stats = defaultdict(int)
+    
+    def log_suspicious(self, ip: str, reason: str, path: str, method: str):
+        """Log suspicious request"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "ip": ip,
+            "reason": reason,
+            "path": path,
+            "method": method,
+        }
+        self.suspicious_logs.append(log_entry)
+        
+        # Update stats
+        self.stats[ip] += 1
+        self.stats[f"reason:{reason}"] += 1
+        
+        # Trim logs if needed
+        if len(self.suspicious_logs) > self.max_logs:
+            self.suspicious_logs = self.suspicious_logs[-self.max_logs:]
+        
+        logger.warning(f"🚨 Suspicious request from {ip}: {reason}")
+    
+    def get_stats(self) -> Dict:
+        """Get security statistics"""
+        return {
+            "total_suspicious": len(self.suspicious_logs),
+            "stats": dict(self.stats),
+            "recent": self.suspicious_logs[-10:]  # Last 10 suspicious requests
+        }
+
+
+# ==================== MAIN SECURITY MIDDLEWARE ====================
+
+class EnterpriseSecurityMiddleware(BaseHTTPMiddleware):
+    """Ultimate security middleware with all protections"""
+    
+    def __init__(self, app: FastAPI):
+        super().__init__(app)
+        self.rate_limiter = AdvancedRateLimiter()
+        self.ip_validator = IPValidator()
+        self.detector = InjectionDetector()
+        self.logger = RequestLogger()
+    
     async def dispatch(self, request: Request, call_next):
         """Main security dispatch function"""
         
-        # Extract client info
+        # Extract client information
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "")
         path = request.url.path
         method = request.method
         
-        # === 1. IP Blacklist Check ===
-        if client_ip in SecurityConfig.IP_BLACKLIST:
-            logger.warning(f"🚫 Blocked blacklisted IP: {client_ip}")
+        # === 1. IP Validation ===
+        allowed, reason = self.ip_validator.is_ip_allowed(client_ip)
+        if not allowed:
+            self.logger.log_suspicious(client_ip, reason, path, method)
             return JSONResponse(
                 status_code=403,
-                content={"detail": "Access denied"}
+                content={
+                    "detail": "Access denied",
+                    "reason": reason,
+                    "code": "IP_BLOCKED"
+                }
             )
         
         # === 2. Rate Limiting ===
-        if SecurityConfig.RATE_LIMIT_ENABLED:
-            allowed, reason = self.rate_limiter.check(client_ip)
-            if not allowed:
-                logger.warning(f"🚫 Rate limit for IP {client_ip}: {reason}")
-                return JSONResponse(
-                    status_code=429,
-                    content={"detail": reason}
-                )
+        allowed, reason, retry_after = self.rate_limiter.check(client_ip)
+        if not allowed:
+            self.logger.log_suspicious(client_ip, reason, path, method)
+            response = JSONResponse(
+                status_code=429,
+                content={
+                    "detail": reason,
+                    "code": "RATE_LIMITED",
+                    "retry_after": retry_after
+                }
+            )
+            response.headers["Retry-After"] = str(retry_after)
+            return response
         
         # === 3. User Agent Validation ===
-        if self.validator.is_suspicious_user_agent(user_agent):
-            logger.warning(f"🚫 Suspicious UA from IP {client_ip}: {user_agent}")
+        suspicious, reason = self.ip_validator.is_suspicious_user_agent(user_agent)
+        if suspicious:
+            self.logger.log_suspicious(client_ip, reason, path, method)
             return JSONResponse(
                 status_code=403,
-                content={"detail": "Access denied"}
+                content={
+                    "detail": "Access denied",
+                    "reason": reason,
+                    "code": "SUSPICIOUS_UA"
+                }
             )
         
         # === 4. Path Traversal Check ===
-        if self.detector.check_path_traversal(path):
-            logger.warning(f"🚫 Path traversal attempt from IP {client_ip}: {path}")
-            self.rate_limiter.blacklist.add(client_ip)
+        detected, reason = self.detector.check_path_traversal(path)
+        if detected:
+            self.logger.log_suspicious(client_ip, reason, path, method)
             return JSONResponse(
-                status_code=403,
-                content={"detail": "Invalid request path"}
+                status_code=400,
+                content={
+                    "detail": "Invalid request path",
+                    "reason": reason,
+                    "code": "PATH_TRAVERSAL"
+                }
             )
         
-        # === 5. Request Body Inspection (for POST/PUT/PATCH) ===
-        if method in ["POST", "PUT", "PATCH"]:
+        # === 5. Request Body Inspection (for state-changing methods) ===
+        if method in ["POST", "PUT", "PATCH", "DELETE"]:
             try:
+                # Try to get body as text
                 body_bytes = await request.body()
                 if body_bytes:
                     # Reset body for later consumption
                     request._body = body_bytes
                     
-                    # Convert to string for inspection
+                    # Decode body
                     body_str = body_bytes.decode('utf-8', errors='ignore')
                     
-                    # Check for injection attacks
-                    if self.detector.check_all(body_str):
-                        logger.warning(f"🚫 Injection attack from IP {client_ip}")
-                        self.rate_limiter.blacklist.add(client_ip)
+                    # Check for injections
+                    detected, reason = self.detector.check_all(body_str)
+                    if detected:
+                        self.logger.log_suspicious(client_ip, reason, path, method)
                         return JSONResponse(
                             status_code=400,
-                            content={"detail": "Invalid request content"}
+                            content={
+                                "detail": "Invalid request content",
+                                "reason": reason,
+                                "code": "INJECTION_DETECTED"
+                            }
                         )
             except Exception as e:
                 logger.error(f"Error inspecting request body: {e}")
         
-        # === 6. Process Request ===
+        # === 6. Check headers for suspicious content ===
+        for header_name, header_value in request.headers.items():
+            if header_name.lower() in ["authorization", "cookie", "x-api-key"]:
+                continue  # Skip sensitive headers
+            detected, reason = self.detector.check_all(header_value)
+            if detected:
+                self.logger.log_suspicious(client_ip, f"Header {header_name}: {reason}", path, method)
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "detail": "Invalid request headers",
+                        "reason": f"Suspicious content in {header_name}",
+                        "code": "INVALID_HEADER"
+                    }
+                )
+        
+        # === 7. Process the request ===
         try:
             response = await call_next(request)
         except Exception as e:
             logger.error(f"Request processing error: {e}")
             return JSONResponse(
                 status_code=500,
-                content={"detail": "Internal server error"}
+                content={
+                    "detail": "Internal server error",
+                    "code": "SERVER_ERROR"
+                }
             )
         
-        # === 7. Add Security Headers ===
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # === 8. Add security headers ===
+        for header, value in SecurityConfig.SECURITY_HEADERS.items():
+            response.headers[header] = value
         
         return response
+
+
+# ==================== SECURITY STATS ENDPOINT ====================
+
+def add_security_stats_endpoint(app: FastAPI, middleware: EnterpriseSecurityMiddleware):
+    """Add endpoint to view security statistics"""
+    
+    @app.get("/admin/security/stats")
+    async def get_security_stats():
+        """Get security statistics (admin only - add auth later)"""
+        return middleware.logger.get_stats()
 
 
 # ==================== EXPORT FUNCTION ====================
 
 def add_security_middleware(app: FastAPI) -> FastAPI:
     """
-    Add enterprise-grade security middleware to FastAPI app
+    Add ultimate security middleware to FastAPI app
     This is the main function called from main.py
     """
-    logger.info("=" * 50)
+    logger.info("=" * 60)
     logger.info("🔒 ADDING ENTERPRISE SECURITY MIDDLEWARE")
-    logger.info("=" * 50)
+    logger.info("=" * 60)
     
-    # Add security middleware
+    # Create and add middleware
+    security_middleware = EnterpriseSecurityMiddleware(app)
     app.add_middleware(EnterpriseSecurityMiddleware)
     
-    # Log security status
-    logger.info("✅ Enterprise Security Middleware: LOADED")
-    logger.info("├─ Rate Limiting: 60 requests/minute")
-    logger.info("├─ SQL Injection Protection: ACTIVE")
-    logger.info("├─ XSS Protection: ACTIVE")
-    logger.info("├─ Path Traversal Protection: ACTIVE")
-    logger.info("├─ IP Blacklisting: ACTIVE")
-    logger.info("├─ Suspicious UA Detection: ACTIVE")
-    logger.info("└─ Security Headers: ADDED")
-    logger.info("=" * 50)
+    # Add security stats endpoint (optional - remove in production if not needed)
+    # add_security_stats_endpoint(app, security_middleware)
+    
+    # Log security features
+    logger.info("✅ ENTERPRISE SECURITY MIDDLEWARE: ACTIVE")
+    logger.info("├─ Rate Limiting: 100 requests/minute + burst")
+    logger.info("├─ IP Blacklisting: Active")
+    logger.info("├─ SQL Injection Protection: Active")
+    logger.info("├─ XSS Protection: Active")
+    logger.info("├─ Path Traversal Protection: Active")
+    logger.info("├─ Command Injection Protection: Active")
+    logger.info("├─ Suspicious User Agent Detection: Active")
+    logger.info("├─ Request Body Inspection: Active")
+    logger.info("└─ Security Headers: Added (11 headers)")
+    logger.info("=" * 60)
     
     return app

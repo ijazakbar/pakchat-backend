@@ -47,3 +47,5 @@ assemblyai==0.21.0
 elevenlabs==0.2.27
 
 aiofiles==23.2.1
+# ================= FAL.AI =================   <-- YEH SECTION ADD KARO
+fal-client==0.5.1

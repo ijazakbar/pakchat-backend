@@ -524,7 +524,7 @@ async def startup_event():
         import traceback
         logger.error(traceback.format_exc())
 
-# ==================== CORS (UPDATED) ====================
+# ==================== CORS (FINAL FIX) ====================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -535,7 +535,7 @@ app.add_middleware(
         "https://pakchatai.vercel.app",
         "https://pakchat-frontend.vercel.app",
         "https://pakchatai-git-main-ijazakbars-projects.vercel.app",
-        "https://frontend-kappa-olive-21.vercel.app",  # 👈 YEH ADD KARO (Tumhara current URL)
+        "https://frontend-kappa-olive-21.vercel.app",
         "https://pakchat-backend.onrender.com",
     ],
     allow_credentials=True,
@@ -544,6 +544,42 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=86400,
 )
+
+# ==================== CUSTOM CORS MIDDLEWARE ====================
+@app.middleware("http")
+async def cors_middleware(request: Request, call_next):
+    # Handle preflight requests
+    if request.method == "OPTIONS":
+        response = JSONResponse(content={})
+        origin = request.headers.get("origin")
+        if origin in [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "https://frontend-kappa-olive-21.vercel.app",
+            "https://pakchatai.vercel.app",
+            "https://pakchat-frontend.vercel.app",
+        ]:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Max-Age"] = "86400"
+        return response
+    
+    # Handle normal requests
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin in [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://frontend-kappa-olive-21.vercel.app",
+        "https://pakchatai.vercel.app",
+        "https://pakchat-frontend.vercel.app",
+    ]:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    
+    return response
 
 # ========== 🔐 ADD SECURITY MIDDLEWARE ==========
 add_security_middleware(app)
@@ -578,20 +614,6 @@ async def get_favicon():
     if favicon_path.exists():
         return FileResponse(favicon_path)
     return JSONResponse({"error": "Not found"}, status_code=404)
-
-# ==================== CORS PREFLIGHT ====================
-@app.options("/{path:path}")
-async def options_handler(path: str):
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Max-Age": "86400",
-        }
-    )
 
 # ==================== REQUEST MODELS ====================
 class ChatRequest(BaseModel):

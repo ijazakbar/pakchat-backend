@@ -1,6 +1,7 @@
 """
 PAKCHAT ENTERPRISE SECURITY MIDDLEWARE - FINAL FIXED VERSION
 Render health checks allowed, all security features active
+Swagger UI /docs fixed
 """
 
 import logging
@@ -106,7 +107,7 @@ class SecurityConfig:
         "X-Frame-Options": "DENY",
         "X-XSS-Protection": "1; mode=block",
         "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-        "Content-Security-Policy": "default-src 'self'",
+        "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;",
         "Referrer-Policy": "strict-origin-when-cross-origin",
         "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
         "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -342,9 +343,18 @@ def add_security_middleware(app: FastAPI) -> FastAPI:
         
         if path in ALWAYS_ALLOW_PATHS:
             response = await call_next(request)
-            # Add security headers even to allowed paths
-            for header, value in SecurityConfig.SECURITY_HEADERS.items():
-                response.headers[header] = value
+            
+            # 📚 Docs ke liye security headers mat add karo - taake Swagger UI khule
+            if path in ["/docs", "/redoc", "/openapi.json"]:
+                # Sirf basic headers add karo, CSP nahi
+                response.headers["X-Content-Type-Options"] = "nosniff"
+                response.headers["X-Frame-Options"] = "DENY"
+                # CSP mat add karo
+            else:
+                # Baqi allowed paths ke liye full security headers add karo
+                for header, value in SecurityConfig.SECURITY_HEADERS.items():
+                    response.headers[header] = value
+            
             return response
         
         # ✅ ALLOW Render internal requests

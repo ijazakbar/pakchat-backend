@@ -535,13 +535,14 @@ app.add_middleware(
         "https://pakchatai.vercel.app",
         "https://pakchat-frontend.vercel.app",
         "https://pakchatai-git-main-ijazakbars-projects.vercel.app",
-        "https://pakchat-backend.onrender.com",  # Backend khud bhi allow karo
+        "https://frontend-kappa-olive-21.vercel.app",  # 👈 YEH ADD KARO (Tumhara current URL)
+        "https://pakchat-backend.onrender.com",
     ],
     allow_credentials=True,
-    allow_methods=["*"],  # Sab methods allow karo (GET, POST, PUT, DELETE, OPTIONS)
-    allow_headers=["*"],  # Sab headers allow karo
+    allow_methods=["*"],
+    allow_headers=["*"],
     expose_headers=["*"],
-    max_age=86400,  # Preflight result cache 24 hours
+    max_age=86400,
 )
 
 # ========== 🔐 ADD SECURITY MIDDLEWARE ==========

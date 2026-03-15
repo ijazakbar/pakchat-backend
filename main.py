@@ -534,6 +534,7 @@ app.add_middleware(
         "http://127.0.0.1:8000",
         "http://localhost:3090",
         "http://127.0.0.1:3090",
+        "https://pak-chat-ai.vercel.app",  # 🔥 ADDED
         "https://pakchatai.vercel.app",
         "https://pakchat-frontend.vercel.app",
         "https://pakchatai-git-main-ijazakbars-projects.vercel.app",
@@ -559,6 +560,7 @@ async def cors_middleware(request: Request, call_next):
             "http://127.0.0.1:3000",
             "http://localhost:3090",
             "http://127.0.0.1:3090",
+            "https://pak-chat-ai.vercel.app",  # 🔥 ADDED
             "https://frontend-kappa-olive-21.vercel.app",
             "https://pakchatai.vercel.app",
             "https://pakchat-frontend.vercel.app",
@@ -578,6 +580,7 @@ async def cors_middleware(request: Request, call_next):
         "http://127.0.0.1:3000",
         "http://localhost:3090",
         "http://127.0.0.1:3090",
+        "https://pak-chat-ai.vercel.app",  # 🔥 ADDED
         "https://frontend-kappa-olive-21.vercel.app",
         "https://pakchatai.vercel.app",
         "https://pakchat-frontend.vercel.app",

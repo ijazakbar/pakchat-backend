@@ -534,12 +534,7 @@ app.add_middleware(
         "http://127.0.0.1:8000",
         "http://localhost:3090",
         "http://127.0.0.1:3090",
-        "https://pakchatapp.vercel.app",  # 🔥 ADDED
-        "https://pakchatai.vercel.app",
-        "https://pakchat-frontend.vercel.app",
-        "https://pakchatai-git-main-ijazakbars-projects.vercel.app",
-        "https://frontend-kappa-olive-21.vercel.app",
-        "https://pakchat-backend.onrender.com",
+        "https://frontend-one-olive-11.vercel.app",  # 🔥 ONLY THIS FRONTEND URL
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -560,10 +555,7 @@ async def cors_middleware(request: Request, call_next):
             "http://127.0.0.1:3000",
             "http://localhost:3090",
             "http://127.0.0.1:3090",
-            "https://pak-chat-ai.vercel.app",  # 🔥 ADDED
-            "https://frontend-kappa-olive-21.vercel.app",
-            "https://pakchatai.vercel.app",
-            "https://pakchat-frontend.vercel.app",
+            "https://frontend-one-olive-11.vercel.app",  # 🔥 ONLY THIS FRONTEND URL
         ]:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
@@ -580,10 +572,7 @@ async def cors_middleware(request: Request, call_next):
         "http://127.0.0.1:3000",
         "http://localhost:3090",
         "http://127.0.0.1:3090",
-        "https://pakchatapp.vercel.app",  # 🔥 ADDED
-        "https://frontend-kappa-olive-21.vercel.app",
-        "https://pakchatai.vercel.app",
-        "https://pakchat-frontend.vercel.app",
+        "https://frontend-one-olive-11.vercel.app",  # 🔥 ONLY THIS FRONTEND URL
     ]:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"

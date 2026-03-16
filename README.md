@@ -1,25 +1,42 @@
-# PakChat Backend API
+# PakChat Backend API 🚀
 
-FastAPI backend for PakChat with 23+ AI providers.
+### *Powering Pakistan's Most Advanced AI Assistant*
 
-## 🚀 Features
-- 23+ AI Providers (OpenAI, Google, Groq, DeepSeek, Anthropic, etc.)
-- Wikipedia Search (10+ languages)
-- Tavily Web Search
-- News Aggregator (3 providers)
-- Google Books & Open Library
-- Voice Processing (AssemblyAI + ElevenLabs)
-- Image Generation (Replicate + FAL AI)
-- JWT Authentication
-- Supabase Integration
-- Redis Caching
+<p align="center">
+  <img src="https://pakchat-backend.onrender.com/logo.png" alt="PakChat Backend" width="200"/>
+  <br>
+  <strong>23+ AI Providers • 10+ Languages • Enterprise Ready</strong>
+</p>
 
-## 📦 Installation
+<p align="center">
+  <a href="https://pakchat-backend.onrender.com">
+    <img src="https://img.shields.io/badge/LIVE-API-brightgreen?style=for-the-badge&logo=render" alt="Live API"/>
+  </a>
+  <a href="https://pakchat-backend.onrender.com/docs">
+    <img src="https://img.shields.io/badge/API-DOCS-blue?style=for-the-badge&logo=swagger" alt="API Docs"/>
+  </a>
+  <a href="https://github.com/ijazakbar/pakchat-backend">
+    <img src="https://img.shields.io/badge/GITHUB-REPO-black?style=for-the-badge&logo=github" alt="GitHub"/>
+  </a>
+</p>
 
-```bash
-git clone https://github.com/ijazakbar/pakchat-backend.git
-cd pakchat-backend
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your API keys
-uvicorn main:app --reload
+---
+
+## 🎯 **Features**
+
+### 🤖 **AI Providers (23+)**
+| Category | Providers |
+|----------|-----------|
+| **Chat Models** | OpenAI, Anthropic, Google, DeepSeek, Groq, OpenRouter, Mistral, Cohere, HuggingFace |
+| **Image Gen** | Replicate, FAL.ai |
+| **Voice** | AssemblyAI, ElevenLabs |
+| **Search** | Tavily, Wikipedia, News APIs |
+
+### 🎥 **Video Generation** 🔜 *Coming Soon*
+```json
+{
+  "status": "In Development",
+  "expected_release": "Q2 2026",
+  "providers": ["Replicate", "FAL.ai", "Colab"],
+  "features": ["Text-to-Video", "Video Editing", "Animation"]
+}

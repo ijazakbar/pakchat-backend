@@ -3,8 +3,14 @@
 # All APIs Integrated & Connected
 # ============================================
 
+import logging
+
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Request
+import logging
+
 from fastapi.middleware.cors import CORSMiddleware
+import logging
+
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
 import uvicorn
@@ -21,6 +27,8 @@ import aiohttp
 from dotenv import load_dotenv
 from pathlib import Path
 from jose import JWTError, jwt
+import logging
+
 from fastapi.security import OAuth2PasswordBearer
 
 # ========== 🔐 SECURITY MIDDLEWARE ==========
@@ -34,8 +42,6 @@ except ImportError:
 
 # ==================== LOAD ENVIRONMENT ====================
 load_dotenv()
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 # ==================== FASTAPI APP ====================
 # ✅ APP PEHLE BANAYA - YAHAN SE START

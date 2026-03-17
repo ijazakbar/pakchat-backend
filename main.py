@@ -125,7 +125,7 @@ try:
             logger.warning(f"⚠️ Supabase RLS policy warning: {e}")
             
         # Optional: Test auth.users exists
-        try:
+            try:
         except Exception as e:
             logger.warning(f"⚠️ Auth users table not directly accessible (normal): {e}")
             

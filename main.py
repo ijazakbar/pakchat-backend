@@ -124,10 +124,11 @@ try:
         except Exception as e:
             logger.warning(f"⚠️ Supabase RLS policy warning: {e}")
             
-        # Optional: Test auth.users exists
-            try:
-        except Exception as e:
-            logger.warning(f"⚠️ Auth users table not directly accessible (normal): {e}")
+#        # Optional: Test auth.users exists
+#        pass
+#            try:
+#        except Exception as e:
+#            logger.warning(f"⚠️ Auth users table not directly accessible (normal): {e}")
             
     else:
         supabase = None

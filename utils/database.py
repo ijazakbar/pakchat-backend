@@ -14,7 +14,18 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class Database:
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
     def __init__(self):
+        if self._initialized:
+            return
+            
         # ========== SUPABASE CONFIG ==========
         self.supabase_url = os.getenv("SUPABASE_URL")
         self.supabase_key = os.getenv("SUPABASE_ANON_KEY")
@@ -74,16 +85,27 @@ class Database:
         # ========== DATABASE URL ==========
         self.database_url = os.getenv("DATABASE_URL", "postgresql://localhost/pakchat")
         
-        self._initialized = False
+        # Initialize connections
+        self._init_db()
+        self._initialized = True
     
-    def init_db(self):
+    def _init_db(self):
         """Initialize all database connections"""
         try:
             logger.info("📦 Initializing database connections...")
             
             # 1. Initialize Supabase
             if self.supabase_url and self.supabase_key:
-                self.supabase = create_client(self.supabase_url, self.supabase_key)
+                self.supabase = create_client(
+                    self.supabase_url, 
+                    self.supabase_key,
+                    options={
+                        "schema": "public",
+                        "headers": {
+                            "X-Client-Info": "pakchat-backend"
+                        }
+                    }
+                )
                 logger.info("✅ Supabase connected")
                 
                 # Test query
@@ -120,7 +142,6 @@ class Database:
             # 3. Log API status
             self._log_api_status()
             
-            self._initialized = True
             logger.info("✅ Database initialization complete")
             return True
             
@@ -152,21 +173,15 @@ class Database:
         }
         
         configured = [name for name, key in apis.items() if key]
-        missing = [name for name, key in apis.items() if not key]
-        
         logger.info(f"📊 APIs configured: {', '.join(configured) if configured else 'None'}")
         logger.info(f"📚 Wikipedia languages: {', '.join(self.wikipedia_urls.keys())}")
     
     def get_supabase(self):
         """Get Supabase client"""
-        if not self._initialized:
-            self.init_db()
         return self.supabase
     
     def get_redis(self):
         """Get Redis client"""
-        if not self._initialized:
-            self.init_db()
         return self.redis_client
     
     # ========== USER METHODS ==========
@@ -174,11 +189,9 @@ class Database:
     async def get_user(self, user_id: str) -> Optional[Dict]:
         """Get user by ID"""
         try:
-            supabase = self.get_supabase()
-            if not supabase:
+            if not self.supabase:
                 return None
-            
-            result = supabase.table('users').select('*').eq('id', user_id).execute()
+            result = self.supabase.table('users').select('*').eq('id', user_id).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error getting user: {e}")
@@ -187,11 +200,9 @@ class Database:
     async def get_user_by_email(self, email: str) -> Optional[Dict]:
         """Get user by email"""
         try:
-            supabase = self.get_supabase()
-            if not supabase:
+            if not self.supabase:
                 return None
-            
-            result = supabase.table('users').select('*').eq('email', email).execute()
+            result = self.supabase.table('users').select('*').eq('email', email).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error getting user by email: {e}")
@@ -200,11 +211,9 @@ class Database:
     async def create_user(self, user_data: Dict) -> Optional[Dict]:
         """Create new user"""
         try:
-            supabase = self.get_supabase()
-            if not supabase:
+            if not self.supabase:
                 return None
-            
-            result = supabase.table('users').insert(user_data).execute()
+            result = self.supabase.table('users').insert(user_data).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error creating user: {e}")
@@ -213,11 +222,9 @@ class Database:
     async def update_user(self, user_id: str, update_data: Dict) -> Optional[Dict]:
         """Update user"""
         try:
-            supabase = self.get_supabase()
-            if not supabase:
+            if not self.supabase:
                 return None
-            
-            result = supabase.table('users').update(update_data).eq('id', user_id).execute()
+            result = self.supabase.table('users').update(update_data).eq('id', user_id).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error updating user: {e}")
@@ -228,10 +235,9 @@ class Database:
         try:
             if not self.redis_client:
                 return
-            
             key = f"usage:{user_id}:{action}:{datetime.now().strftime('%Y-%m-%d')}"
             self.redis_client.incr(key)
-            self.redis_client.expire(key, 86400 * 30)  # 30 days
+            self.redis_client.expire(key, 86400 * 30)
         except Exception as e:
             logger.error(f"Error tracking usage: {e}")
     
@@ -261,7 +267,6 @@ class Database:
         """Call OpenAI API"""
         if not self.openai_api_key:
             return {"error": "OpenAI API key not configured"}
-        
         try:
             async with aiohttp.ClientSession() as session:
                 headers = {
@@ -272,7 +277,6 @@ class Database:
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}]
                 }
-                
                 async with session.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers=headers,
@@ -287,7 +291,6 @@ class Database:
         """Call Groq API"""
         if not self.groq_api_key:
             return {"error": "Groq API key not configured"}
-        
         try:
             async with aiohttp.ClientSession() as session:
                 headers = {
@@ -298,7 +301,6 @@ class Database:
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}]
                 }
-                
                 async with session.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers=headers,
@@ -313,7 +315,6 @@ class Database:
         """Call Tavily Search API"""
         if not self.tavily_api_key:
             return {"error": "Tavily API key not configured"}
-        
         try:
             async with aiohttp.ClientSession() as session:
                 data = {
@@ -321,7 +322,6 @@ class Database:
                     "query": query,
                     "search_depth": depth
                 }
-                
                 async with session.post(
                     "https://api.tavily.com/search",
                     json=data
@@ -335,10 +335,8 @@ class Database:
         """Call Wikipedia API"""
         try:
             base_url = self.wikipedia_urls.get(lang, self.wikipedia_urls['en'])
-            
             async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": self.wiki_user_agent}
-                
                 async with session.get(
                     f"{base_url}/search/page",
                     params={"q": query, "limit": 5},
@@ -360,5 +358,5 @@ class Database:
         except Exception as e:
             logger.error(f"Error closing connections: {e}")
 
-# Create global instance
+# Create global instance - SINGLETON
 db = Database()

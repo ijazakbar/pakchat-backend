@@ -1,4 +1,4 @@
-# utils/database.py - Complete with all APIs from main.py
+# utils/database.py - Single Database Class
 from supabase import create_client, Client
 import os
 import logging
@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 import aiohttp
 import asyncio
+import aiosqlite
 
 logger = logging.getLogger(__name__)
 load_dotenv()
@@ -85,43 +86,31 @@ class Database:
         # ========== DATABASE URL ==========
         self.database_url = os.getenv("DATABASE_URL", "postgresql://localhost/pakchat")
         
+        # ========== SQLITE ==========
+        self.sqlite_path = "pakchat.db"
+        
         # Initialize connections
-        self._init_db()
+        self._init_sync()
         self._initialized = True
     
-    def _init_db(self):
-        """Initialize all database connections"""
+    def _init_sync(self):
+        """Synchronous initialization"""
         try:
             logger.info("📦 Initializing database connections...")
             
-            # 1. Initialize Supabase
+            # 1. Supabase
             if self.supabase_url and self.supabase_key:
-                self.supabase = create_client(
-                    self.supabase_url, 
-                    self.supabase_key,
-                    options={
-                        "schema": "public",
-                        "headers": {
-                            "X-Client-Info": "pakchat-backend"
-                        }
-                    }
-                )
-                logger.info("✅ Supabase connected")
-                
-                # Test query
                 try:
-                    test_query = self.supabase.table('public.users').select('count', count='exact').limit(0).execute()
-                    logger.info("✅ Supabase RLS policies verified")
+                    self.supabase = create_client(self.supabase_url, self.supabase_key)
+                    logger.info("✅ Supabase connected")
                 except Exception as e:
-                    logger.warning(f"⚠️ Supabase RLS policy warning: {e}")
-            else:
-                logger.warning("⚠️ Supabase not configured")
+                    logger.error(f"❌ Supabase connection failed: {e}")
+                    self.supabase = None
             
-            # 2. Initialize Redis (Upstash)
+            # 2. Redis
             if self.upstash_redis_url and self.upstash_redis_token:
                 try:
-                    hostname = self.upstash_redis_url.replace('https://', '').replace('http://', '')
-                    
+                    hostname = self.upstash_redis_url.replace('https://', '').replace('http://', '').split('/')[0]
                     self.redis_client = redis.Redis(
                         host=hostname,
                         port=6379,
@@ -132,119 +121,218 @@ class Database:
                         socket_connect_timeout=5
                     )
                     self.redis_client.ping()
-                    logger.info(f"✅ Upstash Redis connected to {hostname}")
+                    logger.info(f"✅ Redis connected")
                 except Exception as e:
                     logger.error(f"❌ Redis connection failed: {e}")
                     self.redis_client = None
-            else:
-                logger.warning("⚠️ Redis credentials missing")
-            
-            # 3. Log API status
-            self._log_api_status()
             
             logger.info("✅ Database initialization complete")
-            return True
             
         except Exception as e:
             logger.error(f"❌ Database initialization failed: {e}")
-            return False
     
-    def _log_api_status(self):
-        """Log which APIs are configured"""
-        apis = {
-            "OpenAI": self.openai_api_key,
-            "Groq": self.groq_api_key,
-            "DeepSeek": self.deepseek_api_key,
-            "Replicate": self.replicate_api_key,
-            "FAL.ai": self.fal_ai_api_key,
-            "OpenRouter": self.openrouter_api_key,
-            "Google": self.google_api_key,
-            "HuggingFace": self.huggingface_api_key,
-            "Tavily": self.tavily_api_key,
-            "Anthropic": self.anthropic_api_key,
-            "Cohere": self.cohere_api_key,
-            "Mistral": self.mistral_api_key,
-            "TheNewsAPI": self.thenews_api_key,
-            "NewsData.io": self.newsdata_io_key,
-            "NewsAPI.org": self.newsapi_org_key,
-            "AssemblyAI": self.assemblyai_api_key,
-            "ElevenLabs": self.elevenlabs_api_key,
-            "Kaggle": self.kaggle_api_token,
-        }
-        
-        configured = [name for name, key in apis.items() if key]
-        logger.info(f"📊 APIs configured: {', '.join(configured) if configured else 'None'}")
-        logger.info(f"📚 Wikipedia languages: {', '.join(self.wikipedia_urls.keys())}")
+    async def init_db(self):
+        """Async database initialization"""
+        try:
+            # Create SQLite tables
+            async with aiosqlite.connect(self.sqlite_path) as db:
+                # Users table
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS users (
+                        id TEXT PRIMARY KEY,
+                        email TEXT UNIQUE,
+                        username TEXT,
+                        password_hash TEXT,
+                        full_name TEXT,
+                        credits INTEGER DEFAULT 1000,
+                        is_active INTEGER DEFAULT 1,
+                        is_verified INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        settings TEXT DEFAULT '{}',
+                        metadata TEXT DEFAULT '{}'
+                    )
+                ''')
+                
+                # Sessions table
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        id TEXT PRIMARY KEY,
+                        user_id TEXT,
+                        token TEXT UNIQUE,
+                        expires_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (id)
+                    )
+                ''')
+                
+                # Conversations table
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS conversations (
+                        id TEXT PRIMARY KEY,
+                        user_id TEXT,
+                        title TEXT,
+                        messages TEXT,
+                        model TEXT,
+                        tokens INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (id)
+                    )
+                ''')
+                
+                # Files table
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS files (
+                        id TEXT PRIMARY KEY,
+                        user_id TEXT,
+                        filename TEXT,
+                        file_path TEXT,
+                        file_size INTEGER,
+                        file_type TEXT,
+                        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (id)
+                    )
+                ''')
+                
+                await db.commit()
+                logger.info("✅ SQLite tables created/verified")
+                
+        except Exception as e:
+            logger.error(f"❌ SQLite initialization failed: {e}")
     
     def get_supabase(self):
-        """Get Supabase client"""
         return self.supabase
     
     def get_redis(self):
-        """Get Redis client"""
         return self.redis_client
     
     # ========== USER METHODS ==========
     
     async def get_user(self, user_id: str) -> Optional[Dict]:
-        """Get user by ID"""
         try:
-            if not self.supabase:
-                return None
-            result = self.supabase.table('public.users').select('*').eq('id', user_id).execute()
-            return result.data[0] if result.data else None
+            # Try Supabase first
+            if self.supabase:
+                result = self.supabase.table('users').select('*').eq('id', user_id).execute()
+                if result.data:
+                    return result.data[0]
+            
+            # SQLite fallback
+            async with aiosqlite.connect(self.sqlite_path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+                row = await cursor.fetchone()
+                if row:
+                    data = dict(row)
+                    # Parse JSON fields
+                    if 'settings' in data and data['settings']:
+                        data['settings'] = json.loads(data['settings'])
+                    if 'metadata' in data and data['metadata']:
+                        data['metadata'] = json.loads(data['metadata'])
+                    return data
+            return None
         except Exception as e:
             logger.error(f"Error getting user: {e}")
             return None
     
     async def get_user_by_email(self, email: str) -> Optional[Dict]:
-        """Get user by email"""
         try:
-            if not self.supabase:
-                return None
-            result = self.supabase.table('public.users').select('*').eq('email', email).execute()
-            return result.data[0] if result.data else None
+            if self.supabase:
+                result = self.supabase.table('users').select('*').eq('email', email).execute()
+                if result.data:
+                    return result.data[0]
+            
+            async with aiosqlite.connect(self.sqlite_path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute('SELECT * FROM users WHERE email = ?', (email,))
+                row = await cursor.fetchone()
+                if row:
+                    return dict(row)
+            return None
         except Exception as e:
             logger.error(f"Error getting user by email: {e}")
             return None
     
     async def create_user(self, user_data: Dict) -> Optional[Dict]:
-        """Create new user"""
         try:
-            if not self.supabase:
-                return None
-            result = self.supabase.table('public.users').insert(user_data).execute()
-            return result.data[0] if result.data else None
+            # Ensure required fields
+            if 'id' not in user_data:
+                user_data['id'] = str(uuid.uuid4())
+            if 'created_at' not in user_data:
+                user_data['created_at'] = datetime.now().isoformat()
+            if 'updated_at' not in user_data:
+                user_data['updated_at'] = datetime.now().isoformat()
+            if 'credits' not in user_data:
+                user_data['credits'] = 1000
+            
+            # Convert dict fields to JSON
+            if 'settings' in user_data and isinstance(user_data['settings'], dict):
+                user_data['settings'] = json.dumps(user_data['settings'])
+            if 'metadata' in user_data and isinstance(user_data['metadata'], dict):
+                user_data['metadata'] = json.dumps(user_data['metadata'])
+            
+            # Try Supabase
+            if self.supabase:
+                try:
+                    result = self.supabase.table('users').insert(user_data).execute()
+                    if result.data:
+                        return result.data[0]
+                except Exception as e:
+                    logger.warning(f"Supabase insert failed: {e}")
+            
+            # SQLite fallback
+            async with aiosqlite.connect(self.sqlite_path) as db:
+                placeholders = ', '.join(['?' for _ in user_data])
+                columns = ', '.join(user_data.keys())
+                values = list(user_data.values())
+                
+                await db.execute(f'INSERT INTO users ({columns}) VALUES ({placeholders})', values)
+                await db.commit()
+                
+                return await self.get_user(user_data['id'])
+                
         except Exception as e:
             logger.error(f"Error creating user: {e}")
             return None
     
     async def update_user(self, user_id: str, update_data: Dict) -> Optional[Dict]:
-        """Update user"""
         try:
-            if not self.supabase:
-                return None
-            result = self.supabase.table('public.users').update(update_data).eq('id', user_id).execute()
-            return result.data[0] if result.data else None
+            update_data['updated_at'] = datetime.now().isoformat()
+            
+            if self.supabase:
+                try:
+                    result = self.supabase.table('users').update(update_data).eq('id', user_id).execute()
+                    if result.data:
+                        return result.data[0]
+                except Exception as e:
+                    logger.warning(f"Supabase update failed: {e}")
+            
+            async with aiosqlite.connect(self.sqlite_path) as db:
+                set_clause = ', '.join([f"{k} = ?" for k in update_data.keys()])
+                values = list(update_data.values())
+                values.append(user_id)
+                
+                await db.execute(f'UPDATE users SET {set_clause} WHERE id = ?', values)
+                await db.commit()
+                
+                return await self.get_user(user_id)
+                
         except Exception as e:
             logger.error(f"Error updating user: {e}")
             return None
     
     async def track_usage(self, user_id: str, action: str):
-        """Track user usage"""
         try:
-            if not self.redis_client:
-                return
-            key = f"usage:{user_id}:{action}:{datetime.now().strftime('%Y-%m-%d')}"
-            self.redis_client.incr(key)
-            self.redis_client.expire(key, 86400 * 30)
+            if self.redis_client:
+                key = f"usage:{user_id}:{action}:{datetime.now().strftime('%Y-%m-%d')}"
+                self.redis_client.incr(key)
+                self.redis_client.expire(key, 86400 * 30)
         except Exception as e:
             logger.error(f"Error tracking usage: {e}")
     
     # ========== CACHE METHODS ==========
     
     async def cache_get(self, key: str) -> Optional[Any]:
-        """Get from cache"""
         try:
             if self.redis_client:
                 value = self.redis_client.get(key)
@@ -254,7 +342,6 @@ class Database:
         return None
     
     async def cache_set(self, key: str, value: Any, ttl: int = 86400):
-        """Set in cache"""
         try:
             if self.redis_client:
                 self.redis_client.setex(key, ttl, json.dumps(value))
@@ -264,7 +351,6 @@ class Database:
     # ========== API METHODS ==========
     
     async def call_openai(self, prompt: str, model: str = "gpt-3.5-turbo"):
-        """Call OpenAI API"""
         if not self.openai_api_key:
             return {"error": "OpenAI API key not configured"}
         try:
@@ -288,7 +374,6 @@ class Database:
             return {"error": str(e)}
     
     async def call_groq(self, prompt: str, model: str = "mixtral-8x7b-32768"):
-        """Call Groq API"""
         if not self.groq_api_key:
             return {"error": "Groq API key not configured"}
         try:
@@ -312,7 +397,6 @@ class Database:
             return {"error": str(e)}
     
     async def call_tavily(self, query: str, depth: str = "basic"):
-        """Call Tavily Search API"""
         if not self.tavily_api_key:
             return {"error": "Tavily API key not configured"}
         try:
@@ -332,7 +416,6 @@ class Database:
             return {"error": str(e)}
     
     async def call_wikipedia(self, query: str, lang: str = 'en'):
-        """Call Wikipedia API"""
         try:
             base_url = self.wikipedia_urls.get(lang, self.wikipedia_urls['en'])
             async with aiohttp.ClientSession() as session:
@@ -349,8 +432,7 @@ class Database:
     
     # ========== CLEANUP ==========
     
-    def close(self):
-        """Close connections"""
+    async def close(self):
         try:
             if self.redis_client:
                 self.redis_client.close()
@@ -358,5 +440,5 @@ class Database:
         except Exception as e:
             logger.error(f"Error closing connections: {e}")
 
-# Create global instance - SINGLETON
+# SINGLE GLOBAL INSTANCE - YAHI USE KARO
 db = Database()

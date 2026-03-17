@@ -109,12 +109,20 @@ try:
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
         logger.info("✅ Supabase connected")
         
-        # Test query to verify RLS policies
+        # Test query to verify RLS policies - 🔥 FIXED: public.users
         try:
-            test_query = supabase.table('users').select('count', count='exact').limit(0).execute()
-            logger.info("✅ Supabase RLS policies verified")
+            test_query = supabase.table('public.users').select('count', count='exact').limit(0).execute()
+            logger.info("✅ Supabase RLS policies verified for public.users")
         except Exception as e:
             logger.warning(f"⚠️ Supabase RLS policy warning: {e}")
+            
+        # Optional: Test auth.users exists
+        try:
+            auth_test = supabase.table('auth.users').select('count', count='exact').limit(0).execute()
+            logger.info("✅ Auth users table accessible")
+        except Exception as e:
+            logger.warning(f"⚠️ Auth users table not directly accessible (normal): {e}")
+            
     else:
         supabase = None
         logger.warning("⚠️ Supabase not configured")

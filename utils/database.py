@@ -110,7 +110,7 @@ class Database:
                 
                 # Test query
                 try:
-                    test_query = self.supabase.table('users').select('count', count='exact').limit(0).execute()
+                    test_query = self.supabase.table('public.users').select('count', count='exact').limit(0).execute()
                     logger.info("✅ Supabase RLS policies verified")
                 except Exception as e:
                     logger.warning(f"⚠️ Supabase RLS policy warning: {e}")
@@ -191,7 +191,7 @@ class Database:
         try:
             if not self.supabase:
                 return None
-            result = self.supabase.table('users').select('*').eq('id', user_id).execute()
+            result = self.supabase.table('public.users').select('*').eq('id', user_id).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error getting user: {e}")
@@ -202,7 +202,7 @@ class Database:
         try:
             if not self.supabase:
                 return None
-            result = self.supabase.table('users').select('*').eq('email', email).execute()
+            result = self.supabase.table('public.users').select('*').eq('email', email).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error getting user by email: {e}")
@@ -213,7 +213,7 @@ class Database:
         try:
             if not self.supabase:
                 return None
-            result = self.supabase.table('users').insert(user_data).execute()
+            result = self.supabase.table('public.users').insert(user_data).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error creating user: {e}")
@@ -224,7 +224,7 @@ class Database:
         try:
             if not self.supabase:
                 return None
-            result = self.supabase.table('users').update(update_data).eq('id', user_id).execute()
+            result = self.supabase.table('public.users').update(update_data).eq('id', user_id).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error updating user: {e}")

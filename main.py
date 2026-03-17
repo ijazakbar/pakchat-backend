@@ -117,7 +117,7 @@ try:
         
         # Test query to verify RLS policies
         try:
-            test_query = supabase.table('public.users').select('count', count='exact').limit(0).execute()
+            test_query = supabase.table('users').select('count', count='exact').limit(0).execute()
             logger.info("✅ Supabase RLS policies verified")
         except Exception as e:
             logger.warning(f"⚠️ Supabase RLS policy warning: {e}")
@@ -746,7 +746,7 @@ async def register(request: Dict[str, Any]):
                         "full_name": full_name,
                         "created_at": datetime.now().isoformat()
                     }
-                    supabase.table('public.users').insert(user_data).execute()
+                    supabase.table('users').insert(user_data).execute()
                     
                     token = jwt.encode(
                         {"sub": result.user.id, "email": email, "type": "access"},
@@ -838,7 +838,7 @@ async def login(request: Dict[str, Any]):
                 
                 if result.user:
                     # Get user data
-                    user_data = supabase.table('public.users')\
+                    user_data = supabase.table('users')\
                         .select('*')\
                         .eq('id', result.user.id)\
                         .execute()
@@ -946,7 +946,7 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
         # Try Supabase first
         if supabase:
             try:
-                user_data = supabase.table('public.users')\
+                user_data = supabase.table('users')\
                     .select('*')\
                     .eq('id', user_id)\
                     .execute()

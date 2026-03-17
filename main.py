@@ -3,14 +3,14 @@
 # All APIs Integrated & Connected
 # ============================================
 
+# Logger - SIRF EK BAAR!
 import logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
+# Ab baqi imports (SIRF EK BAAR)
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Request
-import logging
-
 from fastapi.middleware.cors import CORSMiddleware
-import logging
-
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
 import uvicorn
@@ -19,7 +19,6 @@ from typing import Optional, List, Dict, Any
 import json
 import os
 from datetime import datetime, timedelta
-import logging
 import aiosqlite
 import bcrypt
 import uuid
@@ -27,15 +26,12 @@ import aiohttp
 from dotenv import load_dotenv
 from pathlib import Path
 from jose import JWTError, jwt
-import logging
-
 from fastapi.security import OAuth2PasswordBearer
 
 # ========== 🔐 SECURITY MIDDLEWARE ==========
 try:
     from security_middleware import add_security_middleware
 except ImportError:
-    # Fallback if security middleware not exists
     def add_security_middleware(app):
         logger.warning("⚠️ Security middleware not loaded")
         return app

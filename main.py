@@ -1,14 +1,9 @@
-# ============================================
 # PAKCHAT BACKEND - FINAL PRODUCTION VERSION
 # All APIs Integrated & Connected
 # ============================================
-
-# Logger - SIRF EK BAAR!
 import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-# Ab baqi imports (SIRF EK BAAR)
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse

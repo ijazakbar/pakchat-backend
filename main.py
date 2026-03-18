@@ -11,6 +11,10 @@ from pydantic import BaseModel
 import uvicorn
 import asyncio
 from typing import Optional, List, Dict, Any
+from fastapi import BackgroundTasks
+from pydantic import EmailStr
+import secrets
+import re 
 import json
 import os
 from datetime import datetime, timedelta
@@ -626,6 +630,20 @@ async def get_favicon():
     return JSONResponse({"error": "Not found"}, status_code=404)
 
 # ==================== REQUEST MODELS ====================
+# ✅ NAYE MODELS - PEHLE YEH RAKHO
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: str = ""
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+# 🔥 AB APNE PURANE MODELS - YE WAISE HE RAHENGE
 class ChatRequest(BaseModel):
     message: str
     mode: str = "quick"
@@ -641,6 +659,8 @@ class LLMChatRequest(BaseModel):
     provider: Optional[str] = "auto"
     use_search: bool = False
     use_deepthink: bool = False
+
+# ... baaki saare models (LongContextRequest, VideoRequest, etc) WAISE HE RAHENGE
 
 class LongContextRequest(BaseModel):
     text: str
@@ -709,25 +729,82 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         return None
 
 async def get_optional_user(token: str = Depends(oauth2_scheme)):
-    """Get current user or return None (for optional auth)"""
     try:
         return await get_current_user(token)
     except:
         return None
 
-# ==================== AUTH ENDPOINTS ====================
-@app.post("/api/auth/register", response_model=Dict[str, Any])
-async def register(request: Dict[str, Any]):
-    """Register new user - respects Supabase RLS (allow insert for anon)"""
+# =============== 🔥 NAYA CODE - EMAIL VALIDATION ===============
+ALLOWED_DOMAINS = [
+    'gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 
+    'live.com', 'icloud.com', 'proton.me', 'protonmail.com'
+]
+
+def is_valid_email_domain(email: str) -> bool:
     try:
-        email = request.get("email")
-        password = request.get("password")
-        full_name = request.get("full_name", "")
-        
-        if not email or not password:
-            raise HTTPException(status_code=400, detail="Email and password required")
+        domain = email.split('@')[1].lower()
+        if domain.endswith('.edu') or domain.endswith('.edu.pk'):
+            return True
+        return domain in ALLOWED_DOMAINS
+    except:
+        return False
+
+async def send_verification_email(email: str, token: str):
+    if not RESEND_API_KEY:
+        logger.warning("⚠️ RESEND_API_KEY not configured")
+        return False
+    
+    verification_link = f"{FRONTEND_URL}/verify-email?token={token}"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "from": "PakChat <noreply@pakchat.ai>",
+                    "to": [email],
+                    "subject": "Verify your PakChat email",
+                    "html": f"""
+                        <h2>Welcome to PakChat!</h2>
+                        <p>Click to verify: <a href="{verification_link}">Verify Email</a></p>
+                        <p>Link expires in 24 hours.</p>
+                    """
+                }
+            ) as resp:
+                return resp.status == 200
+    except:
+        return False
+
+# ==================== AUTH ENDPOINTS ====================
+
+@app.post("/api/auth/register")
+async def register(request: RegisterRequest, background_tasks: BackgroundTasks):
+    """Register new user with email verification"""
+    try:
+        email = request.email
+        password = request.password
+        full_name = request.full_name
         
         logger.info(f"📝 Register attempt: {email}")
+        
+        # ✅ 1. Email domain validation
+        if not is_valid_email_domain(email):
+            raise HTTPException(
+                status_code=400, 
+                detail="Only Gmail, Yahoo, Outlook, and educational emails are allowed"
+            )
+        
+        # ✅ 2. Password strength
+        if len(password) < 8:
+            raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+        if not re.search(r"[A-Z]", password):
+            raise HTTPException(status_code=400, detail="Password must contain an uppercase letter")
+        if not re.search(r"[0-9]", password):
+            raise HTTPException(status_code=400, detail="Password must contain a number")
         
         # Try Supabase first
         if supabase:
@@ -739,33 +816,36 @@ async def register(request: Dict[str, Any]):
                 })
                 
                 if result.user:
-                    # Insert into users table (RLS allows anon insert ✅)
                     user_data = {
                         "id": result.user.id,
                         "email": email,
                         "full_name": full_name,
+                        "is_verified": 0,
                         "created_at": datetime.now().isoformat()
                     }
                     supabase.table('public.users').insert(user_data).execute()
                     
-                    token = jwt.encode(
-                        {"sub": result.user.id, "email": email, "type": "access"},
-                        JWT_SECRET,
-                        algorithm="HS256"
-                    )
-                    
-                    refresh_token = jwt.encode(
-                        {"sub": result.user.id, "email": email, "type": "refresh"},
-                        JWT_SECRET,
-                        algorithm="HS256"
-                    )
+                    # Store verification token
+                    verification_token = secrets.token_urlsafe(32)
+                    if redis_client:
+                        redis_client.setex(
+                            f"verify:{verification_token}", 
+                            86400,
+                            json.dumps({"user_id": result.user.id, "email": email})
+                        )
+                        
+                        # Send email in background
+                        background_tasks.add_task(
+                            send_verification_email, 
+                            email, 
+                            verification_token
+                        )
                     
                     logger.info(f"✅ Supabase registration: {email}")
                     return {
                         "success": True,
-                        "token": token,
-                        "refresh_token": refresh_token,
-                        "user": user_data
+                        "message": "Registration successful! Please check your email to verify.",
+                        "user_id": result.user.id
                     }
             except Exception as e:
                 logger.warning(f"⚠️ Supabase registration failed: {e}")
@@ -779,35 +859,44 @@ async def register(request: Dict[str, Any]):
             if await cursor.fetchone():
                 raise HTTPException(status_code=400, detail="Email already registered")
             
-            user_id = str(uuid.uuid4())
+            # Create verification token
+            verification_token = secrets.token_urlsafe(32)
+            
+            # Hash password
             salt = bcrypt.gensalt()
             password_hash = bcrypt.hashpw(password.encode(), salt)
             
+            # Create user (unverified)
+            user_id = str(uuid.uuid4())
             await db_conn.execute(
-                """INSERT INTO users (id, email, password_hash, full_name, credits, created_at, settings)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, email, password_hash.decode(), full_name, 1000, datetime.now().isoformat(), "{}")
+                """INSERT INTO users 
+                   (id, email, password_hash, full_name, credits, is_verified, created_at, settings) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, email, password_hash.decode(), full_name, 1000, 0, 
+                 datetime.now().isoformat(), "{}")
             )
             await db_conn.commit()
             
-            token = jwt.encode(
-                {"sub": user_id, "email": email, "type": "access"},
-                JWT_SECRET,
-                algorithm="HS256"
-            )
+            # Store token in Redis
+            if redis_client:
+                redis_client.setex(
+                    f"verify:{verification_token}", 
+                    86400,
+                    json.dumps({"user_id": user_id, "email": email})
+                )
             
-            refresh_token = jwt.encode(
-                {"sub": user_id, "email": email, "type": "refresh"},
-                JWT_SECRET,
-                algorithm="HS256"
+            # Send verification email in background
+            background_tasks.add_task(
+                send_verification_email, 
+                email, 
+                verification_token
             )
             
             logger.info(f"✅ Local registration: {email}")
             return {
                 "success": True,
-                "token": token,
-                "refresh_token": refresh_token,
-                "user": {"id": user_id, "email": email, "full_name": full_name}
+                "message": "Registration successful! Please check your email to verify.",
+                "user_id": user_id
             }
             
     except HTTPException:
@@ -816,15 +905,53 @@ async def register(request: Dict[str, Any]):
         logger.error(f"❌ Register error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/auth/login", response_model=Dict[str, Any])
-async def login(request: Dict[str, Any]):
-    """Login user - respects Supabase RLS (select own user)"""
+@app.post("/api/auth/verify-email")
+async def verify_email(request: VerifyEmailRequest):
+    """Verify email address"""
     try:
-        email = request.get("email")
-        password = request.get("password")
+        token = request.token
         
-        if not email or not password:
-            raise HTTPException(status_code=400, detail="Email and password required")
+        if not redis_client:
+            raise HTTPException(status_code=500, detail="Verification service unavailable")
+        
+        # Get token data
+        token_data = redis_client.get(f"verify:{token}")
+        if not token_data:
+            raise HTTPException(status_code=400, detail="Invalid or expired token")
+        
+        data = json.loads(token_data)
+        user_id = data.get("user_id")
+        
+        # Update user as verified
+        async with aiosqlite.connect("pakchat.db") as db_conn:
+            await db_conn.execute(
+                "UPDATE users SET is_verified = 1 WHERE id = ?",
+                (user_id,)
+            )
+            await db_conn.commit()
+        
+        # Delete token
+        redis_client.delete(f"verify:{token}")
+        
+        logger.info(f"✅ Email verified: {user_id}")
+        
+        return {
+            "success": True,
+            "message": "Email verified successfully!"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Verify email error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/login")
+async def login(request: LoginRequest):
+    """Login user - only verified emails allowed"""
+    try:
+        email = request.email
+        password = request.password
         
         logger.info(f"🔵 Login attempt: {email}")
         
@@ -837,11 +964,17 @@ async def login(request: Dict[str, Any]):
                 })
                 
                 if result.user:
-                    # Get user data
+                    # Check if verified in our table
                     user_data = supabase.table('public.users')\
                         .select('*')\
                         .eq('id', result.user.id)\
                         .execute()
+                    
+                    if user_data.data and not user_data.data[0].get('is_verified'):
+                        raise HTTPException(
+                            status_code=401, 
+                            detail="Please verify your email first"
+                        )
                     
                     token = jwt.encode(
                         {"sub": result.user.id, "email": email, "type": "access"},
@@ -862,27 +995,44 @@ async def login(request: Dict[str, Any]):
                         "refresh_token": refresh_token,
                         "user": user_data.data[0] if user_data.data else {"id": result.user.id, "email": email}
                     }
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.warning(f"⚠️ Supabase login failed: {e}")
         
         # Local fallback
         async with aiosqlite.connect("pakchat.db") as db_conn:
+            db_conn.row_factory = aiosqlite.Row
             cursor = await db_conn.execute(
-                "SELECT id, email, password_hash, full_name FROM users WHERE email = ?", (email,)
+                "SELECT id, email, password_hash, full_name, is_verified, credits FROM users WHERE email = ?", 
+                (email,)
             )
-            user = await cursor.fetchone()
+            user_row = await cursor.fetchone()
             
-            if not user or not bcrypt.checkpw(password.encode(), user[2].encode()):
+            if not user_row:
                 raise HTTPException(status_code=401, detail="Invalid credentials")
             
+            # ✅ Check verification
+            if not user_row['is_verified']:
+                raise HTTPException(
+                    status_code=401, 
+                    detail="Please verify your email first. Check your inbox."
+                )
+            
+            # Verify password
+            if not bcrypt.checkpw(password.encode(), user_row['password_hash'].encode()):
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            user = dict(user_row)
+            
             token = jwt.encode(
-                {"sub": user[0], "email": user[1], "type": "access"},
+                {"sub": user['id'], "email": user['email'], "type": "access"},
                 JWT_SECRET,
                 algorithm="HS256"
             )
             
             refresh_token = jwt.encode(
-                {"sub": user[0], "email": user[1], "type": "refresh"},
+                {"sub": user['id'], "email": user['email'], "type": "refresh"},
                 JWT_SECRET,
                 algorithm="HS256"
             )
@@ -892,7 +1042,12 @@ async def login(request: Dict[str, Any]):
                 "success": True,
                 "token": token,
                 "refresh_token": refresh_token,
-                "user": {"id": user[0], "email": user[1], "full_name": user[3] or ""}
+                "user": {
+                    "id": user['id'],
+                    "email": user['email'],
+                    "full_name": user['full_name'] or "",
+                    "credits": user['credits']
+                }
             }
                 
     except HTTPException:
@@ -901,7 +1056,7 @@ async def login(request: Dict[str, Any]):
         logger.error(f"❌ Login error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/auth/refresh", response_model=Dict[str, Any])
+@app.post("/api/auth/refresh")
 async def refresh_token(request: Dict[str, Any]):
     """Refresh access token"""
     try:
@@ -917,7 +1072,6 @@ async def refresh_token(request: Dict[str, Any]):
             user_id = payload.get("sub")
             email = payload.get("email")
             
-            # Generate new access token
             new_token = jwt.encode(
                 {"sub": user_id, "email": email, "type": "access"},
                 JWT_SECRET,
@@ -934,9 +1088,9 @@ async def refresh_token(request: Dict[str, Any]):
         logger.error(f"❌ Refresh error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/user/profile", response_model=Dict[str, Any])
+@app.get("/api/user/profile")
 async def get_profile(current_user: dict = Depends(get_current_user)):
-    """Get user profile - respects Supabase RLS (select own user)"""
+    """Get user profile"""
     if not current_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
@@ -957,26 +1111,65 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
         
         # Local fallback
         async with aiosqlite.connect("pakchat.db") as db_conn:
+            db_conn.row_factory = aiosqlite.Row
             cursor = await db_conn.execute(
-                "SELECT id, email, full_name, credits, created_at FROM users WHERE id = ?",
+                "SELECT id, email, full_name, credits, is_verified, created_at FROM users WHERE id = ?",
                 (user_id,)
             )
-            user = await cursor.fetchone()
-            if user:
+            user_row = await cursor.fetchone()
+            if user_row:
                 return {
                     "success": True,
-                    "user": {
-                        "id": user[0],
-                        "email": user[1],
-                        "full_name": user[2],
-                        "credits": user[3],
-                        "created_at": user[4]
-                    }
+                    "user": dict(user_row)
                 }
+        
         return {"success": True, "user": current_user}
+        
     except Exception as e:
         logger.error(f"Profile error: {e}")
-        return {"success": False, "user": None}
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/resend-verification")
+async def resend_verification(request: Dict[str, Any], background_tasks: BackgroundTasks):
+    """Resend verification email"""
+    try:
+        email = request.get("email")
+        
+        async with aiosqlite.connect("pakchat.db") as db_conn:
+            cursor = await db_conn.execute(
+                "SELECT id, is_verified FROM users WHERE email = ?", 
+                (email,)
+            )
+            user = await cursor.fetchone()
+            
+            if not user:
+                return {"success": True, "message": "If email exists, verification link sent"}
+            
+            if user[1]:  # Already verified
+                return {"success": True, "message": "Email already verified"}
+            
+            # Create new token
+            verification_token = secrets.token_urlsafe(32)
+            
+            if redis_client:
+                redis_client.setex(
+                    f"verify:{verification_token}", 
+                    86400,
+                    json.dumps({"user_id": user[0], "email": email})
+                )
+                
+                # Send email
+                background_tasks.add_task(
+                    send_verification_email, 
+                    email, 
+                    verification_token
+                )
+        
+        return {"success": True, "message": "Verification email sent"}
+        
+    except Exception as e:
+        logger.error(f"Resend error: {e}")
+        return {"success": True, "message": "If email exists, verification link sent"}
 
 # ==================== TEST ENDPOINT ====================
 @app.get("/api/test")

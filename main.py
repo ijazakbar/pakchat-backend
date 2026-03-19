@@ -782,8 +782,8 @@ async def send_verification_email(email: str, token: str):
 # ==================== AUTH ENDPOINTS ====================
 
 @app.post("/api/auth/register")
-async def register(request: RegisterRequest, background_tasks: BackgroundTasks):
-    """Register new user with email verification"""
+async def register(request: RegisterRequest):
+    """Register new user (auto-verified)"""
     try:
         email = request.email
         password = request.password
@@ -791,14 +791,14 @@ async def register(request: RegisterRequest, background_tasks: BackgroundTasks):
         
         logger.info(f"📝 Register attempt: {email}")
         
-        # ✅ 1. Email domain validation
+        # Email domain validation
         if not is_valid_email_domain(email):
             raise HTTPException(
                 status_code=400, 
                 detail="Only Gmail, Yahoo, Outlook, and educational emails are allowed"
             )
         
-        # ✅ 2. Password strength
+        # Password strength
         if len(password) < 8:
             raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
         if not re.search(r"[A-Z]", password):
@@ -806,51 +806,7 @@ async def register(request: RegisterRequest, background_tasks: BackgroundTasks):
         if not re.search(r"[0-9]", password):
             raise HTTPException(status_code=400, detail="Password must contain a number")
         
-        # Try Supabase first
-        if supabase:
-            try:
-                result = supabase.auth.sign_up({
-                    "email": email,
-                    "password": password,
-                    "options": {"data": {"full_name": full_name}}
-                })
-                
-                if result.user:
-                    user_data = {
-                        "id": result.user.id,
-                        "email": email,
-                        "full_name": full_name,
-                        "is_verified": 0,
-                        "created_at": datetime.now().isoformat()
-                    }
-                    supabase.table('public.users').insert(user_data).execute()
-                    
-                    # Store verification token
-                    verification_token = secrets.token_urlsafe(32)
-                    if redis_client:
-                        redis_client.setex(
-                            f"verify:{verification_token}", 
-                            86400,
-                            json.dumps({"user_id": result.user.id, "email": email})
-                        )
-                        
-                        # Send email in background
-                        background_tasks.add_task(
-                            send_verification_email, 
-                            email, 
-                            verification_token
-                        )
-                    
-                    logger.info(f"✅ Supabase registration: {email}")
-                    return {
-                        "success": True,
-                        "message": "Registration successful! Please check your email to verify.",
-                        "user_id": result.user.id
-                    }
-            except Exception as e:
-                logger.warning(f"⚠️ Supabase registration failed: {e}")
-        
-        # Local fallback
+        # Local database
         async with aiosqlite.connect("pakchat.db") as db_conn:
             # Check if user exists
             cursor = await db_conn.execute(
@@ -859,44 +815,40 @@ async def register(request: RegisterRequest, background_tasks: BackgroundTasks):
             if await cursor.fetchone():
                 raise HTTPException(status_code=400, detail="Email already registered")
             
-            # Create verification token
-            verification_token = secrets.token_urlsafe(32)
-            
             # Hash password
             salt = bcrypt.gensalt()
             password_hash = bcrypt.hashpw(password.encode(), salt)
             
-            # Create user (unverified)
+            # Create user (AUTO VERIFIED)
             user_id = str(uuid.uuid4())
             await db_conn.execute(
                 """INSERT INTO users 
                    (id, email, password_hash, full_name, credits, is_verified, created_at, settings) 
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, email, password_hash.decode(), full_name, 1000, 0, 
+                (user_id, email, password_hash.decode(), full_name, 1000, 1,  # 👈 1 means verified
                  datetime.now().isoformat(), "{}")
             )
             await db_conn.commit()
             
-            # Store token in Redis
-            if redis_client:
-                redis_client.setex(
-                    f"verify:{verification_token}", 
-                    86400,
-                    json.dumps({"user_id": user_id, "email": email})
-                )
+            # Create tokens directly
+            token = jwt.encode(
+                {"sub": user_id, "email": email, "type": "access"},
+                JWT_SECRET,
+                algorithm="HS256"
+            )
             
-            # Send verification email in background
-            background_tasks.add_task(
-                send_verification_email, 
-                email, 
-                verification_token
+            refresh_token = jwt.encode(
+                {"sub": user_id, "email": email, "type": "refresh"},
+                JWT_SECRET,
+                algorithm="HS256"
             )
             
             logger.info(f"✅ Local registration: {email}")
             return {
                 "success": True,
-                "message": "Registration successful! Please check your email to verify.",
-                "user_id": user_id
+                "token": token,
+                "refresh_token": refresh_token,
+                "user": {"id": user_id, "email": email, "full_name": full_name}
             }
             
     except HTTPException:

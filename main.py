@@ -734,7 +734,7 @@ async def get_optional_user(token: str = Depends(oauth2_scheme)):
     except:
         return None
 
-# =============== 🔥 NAYA CODE - EMAIL VALIDATION ===============
+# =============== 🔥 EMAIL VALIDATION ===============
 ALLOWED_DOMAINS = [
     'gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 
     'live.com', 'icloud.com', 'proton.me', 'protonmail.com'
@@ -825,7 +825,7 @@ async def register(request: RegisterRequest):
                 """INSERT INTO users 
                    (id, email, password_hash, full_name, credits, is_verified, created_at, settings) 
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, email, password_hash.decode(), full_name, 1000, 1,  # 👈 1 means verified
+                (user_id, email, password_hash.decode(), full_name, 1000, 1,
                  datetime.now().isoformat(), "{}")
             )
             await db_conn.commit()
@@ -855,47 +855,6 @@ async def register(request: RegisterRequest):
         raise
     except Exception as e:
         logger.error(f"❌ Register error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/auth/verify-email")
-async def verify_email(request: VerifyEmailRequest):
-    """Verify email address"""
-    try:
-        token = request.token
-        
-        if not redis_client:
-            raise HTTPException(status_code=500, detail="Verification service unavailable")
-        
-        # Get token data
-        token_data = redis_client.get(f"verify:{token}")
-        if not token_data:
-            raise HTTPException(status_code=400, detail="Invalid or expired token")
-        
-        data = json.loads(token_data)
-        user_id = data.get("user_id")
-        
-        # Update user as verified
-        async with aiosqlite.connect("pakchat.db") as db_conn:
-            await db_conn.execute(
-                "UPDATE users SET is_verified = 1 WHERE id = ?",
-                (user_id,)
-            )
-            await db_conn.commit()
-        
-        # Delete token
-        redis_client.delete(f"verify:{token}")
-        
-        logger.info(f"✅ Email verified: {user_id}")
-        
-        return {
-            "success": True,
-            "message": "Email verified successfully!"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Verify email error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/auth/login")
@@ -1079,6 +1038,365 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
         
     except Exception as e:
         logger.error(f"Profile error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== 🔥 SOCIAL LOGIN ENDPOINTS 🔥 ====================
+
+@app.post("/api/auth/google")
+async def auth_google(request: dict):
+    """Google Sign-In"""
+    try:
+        token = request.get("credential")
+        
+        if not token:
+            raise HTTPException(status_code=400, detail="Token required")
+        
+        # Google token verify
+        try:
+            from google.oauth2 import id_token
+            from google.auth.transport import requests
+            
+            idinfo = id_token.verify_oauth2_token(
+                token, 
+                requests.Request(), 
+                os.getenv("GOOGLE_CLIENT_ID")
+            )
+            
+            email = idinfo.get('email')
+            name = idinfo.get('name', '')
+            google_id = idinfo.get('sub')
+            
+            if not email:
+                raise HTTPException(status_code=400, detail="Email not provided")
+            
+        except Exception as e:
+            logger.error(f"Google token verification failed: {e}")
+            raise HTTPException(status_code=401, detail="Invalid Google token")
+        
+        # Database mein user check/create
+        async with aiosqlite.connect("pakchat.db") as db_conn:
+            db_conn.row_factory = aiosqlite.Row
+            cursor = await db_conn.execute(
+                "SELECT * FROM users WHERE email = ?", (email,)
+            )
+            user = await cursor.fetchone()
+            
+            if not user:
+                # Create new user
+                user_id = str(uuid.uuid4())
+                await db_conn.execute(
+                    """INSERT INTO users 
+                       (id, email, full_name, credits, is_verified, auth_provider, social_id, created_at, settings) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, email, name, 1000, 1, 'google', google_id, 
+                     datetime.now().isoformat(), "{}")
+                )
+                await db_conn.commit()
+                
+                cursor = await db_conn.execute(
+                    "SELECT * FROM users WHERE id = ?", (user_id,)
+                )
+                user = await cursor.fetchone()
+            else:
+                user_dict = dict(user)
+                if not user_dict.get('social_id'):
+                    await db_conn.execute(
+                        "UPDATE users SET social_id = ?, auth_provider = ? WHERE id = ?",
+                        (google_id, 'google', user_dict['id'])
+                    )
+                    await db_conn.commit()
+        
+        user_dict = dict(user)
+        
+        # Create JWT tokens
+        token = jwt.encode(
+            {"sub": user_dict['id'], "email": user_dict['email'], "type": "access"},
+            JWT_SECRET,
+            algorithm="HS256"
+        )
+        
+        refresh_token = jwt.encode(
+            {"sub": user_dict['id'], "email": user_dict['email'], "type": "refresh"},
+            JWT_SECRET,
+            algorithm="HS256"
+        )
+        
+        logger.info(f"✅ Google login: {email}")
+        return {
+            "success": True,
+            "token": token,
+            "refresh_token": refresh_token,
+            "user": {
+                "id": user_dict['id'],
+                "email": user_dict['email'],
+                "full_name": user_dict.get('full_name', ''),
+                "credits": user_dict.get('credits', 1000)
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Google login error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/auth/github")
+async def auth_github(request: dict):
+    """GitHub Sign-In"""
+    try:
+        code = request.get("code")
+        
+        if not code:
+            raise HTTPException(status_code=400, detail="Code required")
+        
+        # GitHub token exchange
+        async with aiohttp.ClientSession() as session:
+            token_resp = await session.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id": os.getenv("GITHUB_CLIENT_ID"),
+                    "client_secret": os.getenv("GITHUB_CLIENT_SECRET"),
+                    "code": code
+                },
+                headers={"Accept": "application/json"}
+            )
+            token_data = await token_resp.json()
+            access_token = token_data.get("access_token")
+            
+            if not access_token:
+                raise HTTPException(status_code=401, detail="Failed to get GitHub token")
+            
+            # Get user info
+            user_resp = await session.get(
+                "https://api.github.com/user",
+                headers={"Authorization": f"token {access_token}"}
+            )
+            user_data = await user_resp.json()
+            
+            # Get user emails
+            email_resp = await session.get(
+                "https://api.github.com/user/emails",
+                headers={"Authorization": f"token {access_token}"}
+            )
+            emails = await email_resp.json()
+            
+            # Find primary email
+            primary_email = None
+            for email in emails:
+                if email.get('primary') and email.get('verified'):
+                    primary_email = email.get('email')
+                    break
+            
+            if not primary_email:
+                primary_email = emails[0].get('email') if emails else None
+            
+            if not primary_email:
+                raise HTTPException(status_code=400, detail="Email not provided")
+            
+            github_id = str(user_data.get('id'))
+            name = user_data.get('name') or user_data.get('login') or ''
+        
+        # Database mein user check/create
+        async with aiosqlite.connect("pakchat.db") as db_conn:
+            db_conn.row_factory = aiosqlite.Row
+            cursor = await db_conn.execute(
+                "SELECT * FROM users WHERE email = ?", (primary_email,)
+            )
+            user = await cursor.fetchone()
+            
+            if not user:
+                user_id = str(uuid.uuid4())
+                await db_conn.execute(
+                    """INSERT INTO users 
+                       (id, email, full_name, credits, is_verified, auth_provider, social_id, created_at, settings) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, primary_email, name, 1000, 1, 'github', github_id, 
+                     datetime.now().isoformat(), "{}")
+                )
+                await db_conn.commit()
+                
+                cursor = await db_conn.execute(
+                    "SELECT * FROM users WHERE id = ?", (user_id,)
+                )
+                user = await cursor.fetchone()
+            else:
+                user_dict = dict(user)
+                if not user_dict.get('social_id'):
+                    await db_conn.execute(
+                        "UPDATE users SET social_id = ?, auth_provider = ? WHERE id = ?",
+                        (github_id, 'github', user_dict['id'])
+                    )
+                    await db_conn.commit()
+        
+        user_dict = dict(user)
+        
+        # Create JWT tokens
+        token = jwt.encode(
+            {"sub": user_dict['id'], "email": user_dict['email'], "type": "access"},
+            JWT_SECRET,
+            algorithm="HS256"
+        )
+        
+        refresh_token = jwt.encode(
+            {"sub": user_dict['id'], "email": user_dict['email'], "type": "refresh"},
+            JWT_SECRET,
+            algorithm="HS256"
+        )
+        
+        logger.info(f"✅ GitHub login: {primary_email}")
+        return {
+            "success": True,
+            "token": token,
+            "refresh_token": refresh_token,
+            "user": {
+                "id": user_dict['id'],
+                "email": user_dict['email'],
+                "full_name": user_dict.get('full_name', ''),
+                "credits": user_dict.get('credits', 1000)
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ GitHub login error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/auth/microsoft")
+async def auth_microsoft(request: dict):
+    """Microsoft Sign-In"""
+    try:
+        token = request.get("access_token")
+        
+        if not token:
+            raise HTTPException(status_code=400, detail="Access token required")
+        
+        # Microsoft Graph API
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://graph.microsoft.com/v1.0/me",
+                headers={"Authorization": f"Bearer {token}"}
+            ) as resp:
+                if resp.status != 200:
+                    raise HTTPException(status_code=401, detail="Invalid Microsoft token")
+                
+                data = await resp.json()
+                
+                email = data.get('userPrincipalName') or data.get('mail')
+                name = data.get('displayName', '')
+                microsoft_id = data.get('id')
+                
+                if not email:
+                    raise HTTPException(status_code=400, detail="Email not provided")
+        
+        # Database mein user check/create
+        async with aiosqlite.connect("pakchat.db") as db_conn:
+            db_conn.row_factory = aiosqlite.Row
+            cursor = await db_conn.execute(
+                "SELECT * FROM users WHERE email = ?", (email,)
+            )
+            user = await cursor.fetchone()
+            
+            if not user:
+                user_id = str(uuid.uuid4())
+                await db_conn.execute(
+                    """INSERT INTO users 
+                       (id, email, full_name, credits, is_verified, auth_provider, social_id, created_at, settings) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, email, name, 1000, 1, 'microsoft', microsoft_id, 
+                     datetime.now().isoformat(), "{}")
+                )
+                await db_conn.commit()
+                
+                cursor = await db_conn.execute(
+                    "SELECT * FROM users WHERE id = ?", (user_id,)
+                )
+                user = await cursor.fetchone()
+            else:
+                user_dict = dict(user)
+                if not user_dict.get('social_id'):
+                    await db_conn.execute(
+                        "UPDATE users SET social_id = ?, auth_provider = ? WHERE id = ?",
+                        (microsoft_id, 'microsoft', user_dict['id'])
+                    )
+                    await db_conn.commit()
+        
+        user_dict = dict(user)
+        
+        # Create JWT tokens
+        token = jwt.encode(
+            {"sub": user_dict['id'], "email": user_dict['email'], "type": "access"},
+            JWT_SECRET,
+            algorithm="HS256"
+        )
+        
+        refresh_token = jwt.encode(
+            {"sub": user_dict['id'], "email": user_dict['email'], "type": "refresh"},
+            JWT_SECRET,
+            algorithm="HS256"
+        )
+        
+        logger.info(f"✅ Microsoft login: {email}")
+        return {
+            "success": True,
+            "token": token,
+            "refresh_token": refresh_token,
+            "user": {
+                "id": user_dict['id'],
+                "email": user_dict['email'],
+                "full_name": user_dict.get('full_name', ''),
+                "credits": user_dict.get('credits', 1000)
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Microsoft login error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== VERIFICATION ENDPOINTS ====================
+
+@app.post("/api/auth/verify-email")
+async def verify_email(request: VerifyEmailRequest):
+    """Verify email address"""
+    try:
+        token = request.token
+        
+        if not redis_client:
+            raise HTTPException(status_code=500, detail="Verification service unavailable")
+        
+        # Get token data
+        token_data = redis_client.get(f"verify:{token}")
+        if not token_data:
+            raise HTTPException(status_code=400, detail="Invalid or expired token")
+        
+        data = json.loads(token_data)
+        user_id = data.get("user_id")
+        
+        # Update user as verified
+        async with aiosqlite.connect("pakchat.db") as db_conn:
+            await db_conn.execute(
+                "UPDATE users SET is_verified = 1 WHERE id = ?",
+                (user_id,)
+            )
+            await db_conn.commit()
+        
+        # Delete token
+        redis_client.delete(f"verify:{token}")
+        
+        logger.info(f"✅ Email verified: {user_id}")
+        return {
+            "success": True,
+            "message": "Email verified successfully!"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Verify email error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/auth/resend-verification")

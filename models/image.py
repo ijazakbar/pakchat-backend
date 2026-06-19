@@ -84,6 +84,11 @@ class ImageProcessor:
                 "model": "playgroundai/playground-v2.5-1024px-aesthetic",
                 "sizes": ["1024x1024"]
             },
+            "huggingface": {
+                "provider": "huggingface",
+                "model": "stabilityai/stable-diffusion-xl",
+                "sizes": ["1024x1024", "1152x896", "1216x832", "1344x768", "1536x640"]
+            },
             "fal-ai/flux": {
                 "provider": "fal",
                 "model": "fal-ai/flux",
@@ -143,6 +148,8 @@ class ImageProcessor:
                 return await self._generate_openai(prompt, model_config, size, quality, num_images)
             elif provider == "replicate":
                 return await self._generate_replicate(prompt, model_config, size, num_images)
+            elif provider == "huggingface":
+                return await self._generate_huggingface(prompt, model_config, size, num_images)
             elif provider == "fal":
                 return await self._generate_fal(prompt, model_config, size, num_images)
             elif provider == "stability":
@@ -156,6 +163,10 @@ class ImageProcessor:
                 "message": f"Image generation failed: {str(e)}",
                 "prompt": prompt
             }
+
+    async def generate_replicate(self, prompt: str, size: str = "1024x1024", quality: str = "standard", num_images: int = 1) -> Dict[str, Any]:
+        """Convenience wrapper for Replicate image generation."""
+        return await self.generate(prompt=prompt, model="replicate", size=size, quality=quality, num_images=num_images)
     
     # ========== OPENAI DALL-E ==========
     
@@ -277,6 +288,58 @@ class ImageProcessor:
             
         except Exception as e:
             raise Exception(f"Replicate generation error: {str(e)}")
+
+    async def _generate_huggingface(self, prompt: str, model_config: Dict, size: str, num_images: int) -> Dict[str, Any]:
+        """Generate using HuggingFace image inference."""
+        if not self.huggingface_key:
+            raise Exception("HuggingFace API key not configured")
+
+        model = model_config["model"]
+        width, height = map(int, size.split('x'))
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"https://api-inference.huggingface.co/models/{model}",
+                    headers={
+                        "Authorization": f"Bearer {self.huggingface_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "inputs": prompt,
+                        "options": {"wait_for_model": True},
+                        "parameters": {
+                            "width": width,
+                            "height": height,
+                            "num_images": num_images,
+                            "guidance_scale": 7.5
+                        }
+                    }
+                ) as response:
+                    result = await response.json()
+                    if response.status == 200:
+                        images = []
+                        if isinstance(result, list):
+                            for item in result:
+                                if isinstance(item, dict) and 'generated_image' in item:
+                                    images.append({"base64": item['generated_image']})
+                                elif isinstance(item, dict) and 'generated_text' in item:
+                                    images.append({"url": item.get('generated_text')})
+                        elif isinstance(result, dict) and 'generated_images' in result:
+                            for img in result['generated_images']:
+                                images.append({"base64": img})
+                        else:
+                            images.append({"url": str(result)})
+
+                        return {
+                            "success": True,
+                            "provider": "huggingface",
+                            "model": model,
+                            "images": images,
+                            "prompt": prompt
+                        }
+                    raise Exception(f"HuggingFace image error {response.status}: {result}")
+        except Exception as e:
+            raise Exception(f"HuggingFace image generation error: {str(e)}")
     
     # ========== FAL.AI ==========
     

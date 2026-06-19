@@ -284,12 +284,45 @@ class LLMService:
         }
         return bool(provider_keys.get(provider))
 
+    def _sanitize_messages(self, messages: List[Dict]) -> List[Dict]:
+        sanitized = []
+        if not isinstance(messages, list):
+            return sanitized
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get('role')
+            content = msg.get('content')
+            if role is None or content is None:
+                continue
+            sanitized.append({'role': role, 'content': str(content)})
+        return sanitized
+
+    def _is_retryable_response(self, provider: str, result: Dict) -> bool:
+        if not result:
+            return True
+        choices = result.get('choices', [])
+        if not choices:
+            return True
+        content = choices[0].get('message', {}).get('content', '')
+        if not content or content.strip() == "":
+            return True
+        normalized = content.lower()
+        if any(keyword in normalized for keyword in [
+            'quota exceeded', 'rate limit', 'insufficient', 'insufficient balance',
+            'invalid api key', 'unauthorized', 'permission denied', 'not configured',
+            'service unavailable', 'timeout', 'failed'
+        ]):
+            return True
+        return False
+
     # ========== 🔥 CRITICAL FIX: chat_with_provider METHOD ==========
     async def chat_with_provider(self, provider: str, messages: List[Dict], 
                                  temperature: float = 0.7, max_tokens: Optional[int] = None) -> Dict:
         """Chat with specific provider"""
         
         self.logger.info(f"🔄 Using provider: {provider}")
+        messages = self._sanitize_messages(messages)
         
         if provider == 'openrouter':
             return await self._openrouter_chat(messages, temperature, max_tokens)
@@ -326,7 +359,11 @@ class LLMService:
             if not self.check_provider_available(provider):
                 continue
             try:
-                return await self.chat_with_provider(provider, messages, temperature, max_tokens)
+                result = await self.chat_with_provider(provider, messages, temperature, max_tokens)
+                if self._is_retryable_response(provider, result):
+                    errors.append(f"{provider}: retryable response")
+                    continue
+                return result
             except Exception as e:
                 errors.append(f"{provider}: {str(e)}")
                 continue

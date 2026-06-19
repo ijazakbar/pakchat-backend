@@ -162,6 +162,20 @@ You have deep understanding of Pakistani culture, food, cricket, and local issue
 Always be helpful, friendly, and respectful.
 Keep responses concise and to the point."""
         }
+
+    def _sanitize_messages(self, messages: list) -> list:
+        sanitized = []
+        if not isinstance(messages, list):
+            return sanitized
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            content = msg.get("content")
+            if role is None or content is None:
+                continue
+            sanitized.append({"role": role, "content": str(content)})
+        return sanitized
     
     # === MAIN CHAT METHOD - ALL PROVIDERS ===
     async def chat(self, 
@@ -184,6 +198,7 @@ Keep responses concise and to the point."""
         - "mistral" - Mistral AI
         """
         try:
+            messages = self._sanitize_messages(messages)
             # Add system prompt if not present
             if not any(msg.get("role") == "system" for msg in messages):
                 messages.insert(0, {
@@ -215,6 +230,9 @@ Keep responses concise and to the point."""
                             temperature=temperature,
                             max_tokens=max_tokens
                         )
+                        if self._should_retry_response(result):
+                            last_error = Exception(f"{p} returned retryable response")
+                            continue
                         result["provider"] = p
                         return result
                     except Exception as e:
@@ -621,6 +639,7 @@ Keep responses concise and to the point."""
                           language: str = "urdu") -> AsyncGenerator[str, None]:
         """Streaming response - supports Groq, DeepSeek, OpenRouter"""
         try:
+            messages = self._sanitize_messages(messages)
             # Add system prompt if not present
             if not any(msg.get("role") == "system" for msg in messages):
                 messages.insert(0, {

@@ -166,7 +166,7 @@ class Database:
                     )
                 ''')
                 
-                # Conversations table
+                # Conversations table (includes tokens_used for compatibility)
                 await db.execute('''
                     CREATE TABLE IF NOT EXISTS conversations (
                         id TEXT PRIMARY KEY,
@@ -175,6 +175,7 @@ class Database:
                         messages TEXT,
                         model TEXT,
                         tokens INTEGER DEFAULT 0,
+                        tokens_used INTEGER DEFAULT 0,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (user_id) REFERENCES users (id)
@@ -195,6 +196,24 @@ class Database:
                     )
                 ''')
                 
+                # Ensure migrations: add tokens_used column if missing and migrate values
+                try:
+                    cursor = await db.execute("PRAGMA table_info(conversations)")
+                    cols = await cursor.fetchall()
+                    col_names = [c[1] for c in cols]
+                    if 'tokens_used' not in col_names:
+                        logger.info("🔧 Adding tokens_used column to conversations table")
+                        await db.execute("ALTER TABLE conversations ADD COLUMN tokens_used INTEGER DEFAULT 0")
+                        # If there is an existing 'tokens' column, copy values over
+                        if 'tokens' in col_names:
+                            try:
+                                await db.execute("UPDATE conversations SET tokens_used = tokens WHERE (tokens_used IS NULL OR tokens_used = 0)")
+                                logger.info("🔧 Migrated existing tokens values to tokens_used")
+                            except Exception as _e:
+                                logger.warning(f"⚠️ Migration copy tokens -> tokens_used failed: {_e}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Conversation table migration check failed: {e}")
+
                 await db.commit()
                 logger.info("✅ SQLite tables created/verified")
                 

@@ -49,7 +49,24 @@ class ConversationManager:
                         logger.info(f"✅ Conversation saved to Supabase: {conv_id} - {title}")
                         return conv_id
                 except Exception as e:
-                    logger.warning(f"⚠️ Supabase save failed: {e}, trying local...")
+                    logger.warning(f"⚠️ Supabase save failed: {e}, trying without tokens_used and local...")
+                    # Try again without tokens_used in case remote schema is older
+                    try:
+                        alt = {
+                            "id": conv_id,
+                            "user_id": user_id,
+                            "title": title,
+                            "messages": json.dumps(messages),
+                            "model": model,
+                            "created_at": created_at,
+                            "updated_at": created_at
+                        }
+                        result2 = self.db.supabase.table('conversations').insert(alt).execute()
+                        if result2.data:
+                            logger.info(f"✅ Conversation saved to Supabase (without tokens_used): {conv_id} - {title}")
+                            return conv_id
+                    except Exception as e2:
+                        logger.warning(f"⚠️ Supabase save without tokens_used failed: {e2}")
             
             # Local SQLite fallback
             import aiosqlite
@@ -84,8 +101,20 @@ class ConversationManager:
                         .execute()
                     logger.info(f"✅ Conversation updated: {conv_id}")
                     return
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"⚠️ Supabase update failed: {e}, retrying without tokens_used...")
+                    try:
+                        self.db.supabase.table('conversations')\
+                            .update({
+                                "messages": json.dumps(messages),
+                                "updated_at": updated_at
+                            })\
+                            .eq('id', conv_id)\
+                            .execute()
+                        logger.info(f"✅ Conversation updated (without tokens_used): {conv_id}")
+                        return
+                    except Exception:
+                        pass
             
             # Local fallback
             import aiosqlite

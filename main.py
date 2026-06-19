@@ -122,9 +122,22 @@ try:
         # Test query to verify RLS policies
         try:
             test_query = supabase.table('public.users').select('count', count='exact').limit(0).execute()
-            logger.info("✅ Supabase RLS policies verified")
+            if isinstance(test_query, dict):
+                logger.warning(f"⚠️ Supabase RLS policies returned dict response: {test_query}")
+            else:
+                logger.info("✅ Supabase RLS policies verified")
+        except AttributeError as e:
+            logger.warning(f"⚠️ Supabase connection test attribute error: {e}")
+            try:
+                response = supabase.table('public.users').select('count', count='exact').limit(0).execute()
+                logger.warning(f"⚠️ Supabase raw response after AttributeError: {response}")
+            except Exception as inner_e:
+                logger.warning(f"⚠️ Supabase raw response fetch failed: {inner_e}")
         except Exception as e:
-            logger.warning(f"⚠️ Supabase RLS policy warning: {e}")
+            if isinstance(e, dict):
+                logger.warning(f"⚠️ Supabase connection failed with dict error response: {e}")
+            else:
+                logger.warning(f"⚠️ Supabase RLS policy warning: {e}")
         
         # Auth users table is intentionally not directly accessible
         # This is normal - using RPC functions instead if needed

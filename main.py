@@ -540,19 +540,11 @@ async def startup_event():
         import traceback
         logger.error(traceback.format_exc())
 
-# ==================== CORS (FINAL FIX) ====================
+# ==================== CORS (DEVELOPMENT ULTIMATE FIX) ====================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000", 
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:3090",
-        "http://127.0.0.1:3090",
-        "https://frontend-one-olive-11.vercel.app",  # 🔥 ONLY THIS FRONTEND URL
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],  # 🔥 گٹ ہب کوڈ اسپیس کا جھنجھٹ ہمیشہ کے لیے ختم
+    allow_credentials=False,  # وائلڈ کارڈ کے ساتھ اسے False ہونا ضروری ہے
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],

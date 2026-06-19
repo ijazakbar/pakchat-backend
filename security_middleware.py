@@ -7,8 +7,9 @@ Swagger UI /docs fixed
 import logging
 import time
 import re
+import json
 import ipaddress
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, Any
 from collections import defaultdict
 from datetime import datetime
 from fastapi import FastAPI, Request
@@ -33,14 +34,16 @@ class SecurityConfig:
     IP_WHITELIST: Set[str] = set()
     IP_BLACKLIST: Set[str] = set()
     
-    # SQL Injection Patterns
+    # SQL Injection Patterns - tightened to avoid false positives in regular chat text
     SQL_INJECTION_PATTERNS = [
-        r"(\s|')*(union|select|insert|update|delete|drop|create|alter|exec|execute|truncate|rename|replace|grant|revoke)(\s|')+",
-        r"(\s|')*(or|and)(\s|')+.*(=|<|>|in|like|between)",
-        r"(\s|')*(;|--|#|/\*|\*/)",
-        r"(\s|')*(information_schema|sys.tables|sys.columns)",
-        r"(\s|')*(xp_cmdshell|sp_executesql|sp_prepare)",
-        r"(\s|')*(sleep|waitfor|benchmark)(\s|')*\(",
+        r"\b(union\s+all|union)\b\s+select\b",
+        r"\b(select|insert|update|delete|drop|create|alter|truncate|rename|replace|grant|revoke)\b\s+.*\b(from|into|set|table|database|values|where|join|procedure|trigger)\b",
+        r"\b(or|and)\b\s+(['\"]?\w+['\"]?)\s*(=|<|>|in|like|between)\b",
+        r"\b(drop|truncate|alter|create)\b\s+\b(table|database|index|view|procedure|trigger)\b",
+        # metadata or system catalog queries
+        r"\b(information_schema|sys\.tables|sys\.columns|pg_catalog|pg_tables|mysql\.db)\b",
+        r"\b(xp_cmdshell|sp_executesql|sp_prepare|sp_execute|sp_bindrule)\b",
+        r"\b(sleep|waitfor|benchmark)\b\s*\(",
     ]
     
     # XSS Patterns
@@ -260,6 +263,22 @@ class InjectionDetector:
         return False, ""
     
     @staticmethod
+    def extract_text_fields(payload: Any) -> List[str]:
+        """Recursively extract strings from JSON objects to validate text fields only."""
+        texts: List[str] = []
+        if isinstance(payload, str):
+            texts.append(payload)
+        elif isinstance(payload, dict):
+            for key, value in payload.items():
+                if isinstance(value, (str, dict, list)):
+                    texts.extend(InjectionDetector.extract_text_fields(value))
+        elif isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, (str, dict, list)):
+                    texts.extend(InjectionDetector.extract_text_fields(item))
+        return texts
+
+    @staticmethod
     def check_all(text: str) -> Tuple[bool, str]:
         """Check all injection types"""
         if not text or not isinstance(text, str):
@@ -418,7 +437,7 @@ def add_security_middleware(app: FastAPI) -> FastAPI:
                 }
             )
         
-        # === 5. Request Body Inspection (for POST/PUT requests) ===
+        # === 5. Request Body Inspection (for POST/PUT/PATCH requests) ===
         if method in ["POST", "PUT", "PATCH"]:
             try:
                 body_bytes = await request.body()
@@ -426,17 +445,26 @@ def add_security_middleware(app: FastAPI) -> FastAPI:
                     request._body = body_bytes
                     body_str = body_bytes.decode('utf-8', errors='ignore')
                     
-                    detected, reason = _detector.check_all(body_str)
-                    if detected:
-                        _req_logger.log_suspicious(client_ip, reason, path, method)
-                        return JSONResponse(
-                            status_code=400,
-                            content={
-                                "detail": "Invalid request content",
-                                "reason": reason,
-                                "code": "INJECTION_DETECTED"
-                            }
-                        )
+                    try:
+                        payload = json.loads(body_str)
+                        text_fields = InjectionDetector.extract_text_fields(payload)
+                    except json.JSONDecodeError:
+                        text_fields = [body_str]
+                    
+                    for field_text in text_fields:
+                        if len(field_text) < 10:
+                            continue
+                        detected, reason = _detector.check_all(field_text)
+                        if detected:
+                            _req_logger.log_suspicious(client_ip, reason, path, method)
+                            return JSONResponse(
+                                status_code=400,
+                                content={
+                                    "detail": "Invalid request content",
+                                    "reason": reason,
+                                    "code": "INJECTION_DETECTED"
+                                }
+                            )
             except Exception as e:
                 logger.error(f"Error inspecting request body: {e}")
         

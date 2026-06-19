@@ -543,14 +543,13 @@ async def startup_event():
 # ==================== CORS (DEVELOPMENT ULTIMATE FIX) ====================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 🔥 گٹ ہب کوڈ اسپیس کا جھنجھٹ ہمیشہ کے لیے ختم
-    allow_credentials=False,  # وائلڈ کارڈ کے ساتھ اسے False ہونا ضروری ہے
+    allow_origins=["*"],
+    allow_credentials=False,  # ⚠️ دھیان دیں: پائتھن میں F بڑا (Capital) ہونا چاہیے!
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=86400,
 )
-
 
 
 # ========== 🔐 ADD SECURITY MIDDLEWARE ==========

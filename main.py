@@ -1772,7 +1772,7 @@ async def generate_image(request: ImageGenRequest, current_user: dict = Depends(
         if db and hasattr(db, 'track_usage'):
             await db.track_usage(user_id, "image_generation")
         
-if not image_proc:
+        if not image_proc:
             raise HTTPException(status_code=503, detail="Image generation service not available")
 
         try:

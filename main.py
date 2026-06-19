@@ -1714,16 +1714,20 @@ async def llm_chat_stream(request: LLMChatRequest, current_user: dict = Depends(
                     # Send provider info to client
                     yield f"data: {json.dumps({'provider': provider})}\n\n"
                     
-                    # Stream chunks
-                    async for chunk in llm_service.chat_completion_stream(
-                        messages=request.messages,
+                    # Request provider response and emit as a single chunk
+                    result = await llm_service.chat_with_provider(
+                        provider,
+                        request.messages,
                         temperature=request.temperature,
-                        max_tokens=request.max_tokens,
-                        provider=provider
-                    ):
-                        full_response += chunk
-                        yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-                    
+                        max_tokens=request.max_tokens
+                    )
+                    content = ""
+                    if result and isinstance(result, dict):
+                        choices = result.get('choices', [])
+                        if choices:
+                            content = choices[0].get('message', {}).get('content', '')
+                    full_response += content
+                    yield f"data: {json.dumps({'chunk': content})}\n\n"
                     yield "data: [DONE]\n\n"
                     logger.info(f"✅ Stream successful with {provider}")
                     

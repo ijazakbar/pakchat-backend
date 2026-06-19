@@ -1772,32 +1772,35 @@ async def generate_image(request: ImageGenRequest, current_user: dict = Depends(
         if db and hasattr(db, 'track_usage'):
             await db.track_usage(user_id, "image_generation")
         
-        if not image_proc and not fal_service:
+if not image_proc:
             raise HTTPException(status_code=503, detail="Image generation service not available")
-        
-        if request.provider == "replicate" and image_proc:
-            try:
-                if hasattr(image_proc, 'generate_replicate'):
-                    result = await image_proc.generate_replicate(prompt=request.prompt)
-                else:
-                    result = await image_proc.generate(prompt=request.prompt)
-                    
+
+        try:
+            if request.provider == "replicate":
+                result = await image_proc.generate_replicate(prompt=request.prompt, size=request.size)
+            elif request.provider == "openai":
+                result = await image_proc.generate(prompt=request.prompt, model="dalle-3", size=request.size)
+            elif request.provider == "fal":
+                result = await image_proc.generate(prompt=request.prompt, model="fal-ai/flux", size=request.size)
+            elif request.provider == "stability":
+                result = await image_proc.generate(prompt=request.prompt, model="stable-diffusion-xl", size=request.size)
+            else:
+                result = await image_proc.generate(prompt=request.prompt, model=request.provider, size=request.size)
+
+            if result and not result.get('error'):
+                return result
+            if result and result.get('error'):
+                raise Exception(result.get('message') or 'Image generation returned an error')
+
+        except Exception as e:
+            logger.error(f"Image generation failed: {e}")
+            if request.provider == "replicate" and fal_service:
+                logger.warning(f"Replicate fallback to FAL.ai: {e}")
+                result = await fal_service.generate_image(prompt=request.prompt)
                 if result and not result.get('error'):
                     return result
-            except Exception as e:
-                logger.warning(f"Replicate failed: {e}, trying FAL backup...")
-                if fal_service:
-                    result = await fal_service.generate_image(prompt=request.prompt)
-                    return result
-        
-        elif request.provider == "fal" and fal_service:
-            result = await fal_service.generate_image(prompt=request.prompt)
-            return result
-        
-        elif image_proc:
-            result = await image_proc.generate(prompt=request.prompt)
-            return result
-        
+            raise HTTPException(status_code=503, detail=str(e))
+
         raise HTTPException(status_code=503, detail="No image generation service available")
             
     except HTTPException:

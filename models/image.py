@@ -116,20 +116,29 @@ class ImageProcessor:
         - "fal-ai/stable-diffusion" - SD3 on FAL.ai
         """
         try:
-            model_config = self.models.get(model)
+            model_key = model
+            provider_aliases = {
+                "replicate": "stable-diffusion-xl",
+                "openai": "dalle-3",
+                "fal": "fal-ai/flux",
+                "stability": "stable-diffusion-xl"
+            }
+            if model_key in provider_aliases:
+                model_key = provider_aliases[model_key]
+
+            model_config = self.models.get(model_key)
             if not model_config:
-                # Try to find by provider
-                if model.startswith("fal-ai/"):
+                if model_key.startswith("fal-ai/"):
                     model_config = {
                         "provider": "fal",
-                        "model": model
+                        "model": model_key
                     }
                 else:
                     # Default to DALL-E 3
                     model_config = self.models["dalle-3"]
-            
+
             provider = model_config["provider"]
-            
+
             if provider == "openai":
                 return await self._generate_openai(prompt, model_config, size, quality, num_images)
             elif provider == "replicate":
